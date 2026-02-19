@@ -1,0 +1,23 @@
+# Local environment secrets
+.env
+**/.env
+!.env.example
+!**/.env.example
+!**/.env.exemple
+
+# Go build artifacts
+services/puzzle-generator/bin/
+*.test
+*.out
+
+# Python cache and virtual env
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# Editor/system
+.vscode/
+.DS_Store

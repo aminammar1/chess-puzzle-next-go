@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/chess-puzzle-next/puzzle-generator/internal/models"
+	"github.com/chess-puzzle-next/puzzle-generator/pkg/openrouter"
 )
 
 // LichessAPI defines the subset of lichess.Client used by PuzzleService.
@@ -16,18 +18,31 @@ type LichessAPI interface {
 	GetNextPuzzle(ctx context.Context, difficulty string) (*models.LichessPuzzleResponse, error)
 }
 
+type OpenRouterAPI interface {
+	IsConfigured() bool
+	CreateCompletion(ctx context.Context, messages []openrouter.Message) (string, error)
+}
+
+type DatasetAPI interface {
+	GetRandomPuzzle(ctx context.Context, difficulty models.DifficultyLevel) (*models.Puzzle, error)
+}
+
 // PuzzleService orchestrates puzzle retrieval and enrichment.
 type PuzzleService struct {
 	lichess LichessAPI
+	ai      OpenRouterAPI
+	dataset DatasetAPI
 
 	mu        sync.Mutex
 	recentIDs map[models.DifficultyLevel][]string
 }
 
 // New returns a PuzzleService backed by the given Lichess client.
-func New(lc LichessAPI) *PuzzleService {
+func New(lc LichessAPI, ai OpenRouterAPI, dataset DatasetAPI) *PuzzleService {
 	return &PuzzleService{
 		lichess: lc,
+		ai:      ai,
+		dataset: dataset,
 		recentIDs: map[models.DifficultyLevel][]string{
 			models.DifficultyEasy:   {},
 			models.DifficultyMedium: {},
@@ -95,6 +110,57 @@ func (s *PuzzleService) GetDaily(ctx context.Context) (*models.Puzzle, error) {
 		return nil, fmt.Errorf("puzzle: fetch daily: %w", err)
 	}
 	return s.enrich(raw), nil
+}
+
+func (s *PuzzleService) GenerateFromAI(ctx context.Context, req models.AIPuzzleRequest) (*models.Puzzle, error) {
+	if s.ai == nil || !s.ai.IsConfigured() {
+		return nil, fmt.Errorf("puzzle: AI provider is not configured")
+	}
+	if err := validateAIPuzzleRequest(req); err != nil {
+		return nil, err
+	}
+
+	messages := buildAIPromptMessages(req)
+	var parseErr error
+	var content string
+
+	for attempt := 0; attempt < 2; attempt++ {
+		generated, err := s.ai.CreateCompletion(ctx, messages)
+		if err != nil {
+			return nil, fmt.Errorf("puzzle: generate with openrouter: %w", err)
+		}
+		content = generated
+
+		puzzle, err := parseAIPuzzleResponse(content, req.Difficulty)
+		if err == nil {
+			if puzzle.ID == "" {
+				puzzle.ID = fmt.Sprintf("ai-%d", time.Now().UnixNano())
+			}
+			puzzle.Source = "ai-openrouter"
+			return puzzle, nil
+		}
+
+		parseErr = err
+		messages = buildAICorrectionMessages(req, content, err)
+	}
+
+	return nil, fmt.Errorf("puzzle: parse AI response: %w", parseErr)
+}
+
+func (s *PuzzleService) GenerateFromDataset(ctx context.Context, difficulty models.DifficultyLevel) (*models.Puzzle, error) {
+	if err := validateDifficulty(difficulty); err != nil {
+		return nil, err
+	}
+	if s.dataset == nil {
+		return nil, fmt.Errorf("puzzle: dataset provider is not configured")
+	}
+
+	puzzle, err := s.dataset.GetRandomPuzzle(ctx, difficulty)
+	if err != nil {
+		return nil, fmt.Errorf("puzzle: fetch from dataset: %w", err)
+	}
+
+	return puzzle, nil
 }
 
 func (s *PuzzleService) enrich(raw *models.LichessPuzzleResponse) *models.Puzzle {

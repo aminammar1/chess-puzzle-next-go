@@ -13,6 +13,12 @@ import (
 	"github.com/labstack/gommon/log"
 )
 
+// @title Puzzle Generator API
+// @version 1.0
+// @description Chess puzzle generator service (Lichess, AI via OpenRouter, and Hugging Face dataset).
+// @BasePath /api/v1
+// @schemes http https
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {

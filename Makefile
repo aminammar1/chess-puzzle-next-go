@@ -1,7 +1,7 @@
 GO_SVC     := ./services/puzzle-generator
 GO_VERSION := 1.25.7
 
-.PHONY: help build run test vet tidy clean docker-up docker-up-detach docker-down docker-logs
+.PHONY: help build run test vet tidy clean swagger swagger-install swagger-serve docker-up docker-up-detach docker-down docker-logs
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*##"}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -24,6 +24,14 @@ vet: ## Run go vet
 
 tidy: ## Run go mod tidy
 	cd $(GO_SVC) && go mod tidy
+
+swagger-install: ## Install swagger generator tool
+	cd $(GO_SVC) && go install github.com/swaggo/swag/cmd/swag@v1.16.4
+
+swagger: ## Generate Swagger docs
+	cd $(GO_SVC) && go run github.com/swaggo/swag/cmd/swag@v1.16.4 init -g cmd/server/main.go -o docs
+
+swagger-serve: swagger run ## Run service and open Swagger at /swagger/index.html
 
 clean: ## Remove build artifacts
 	rm -rf $(GO_SVC)/bin

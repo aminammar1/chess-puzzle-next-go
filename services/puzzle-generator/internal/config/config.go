@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -11,8 +12,10 @@ import (
 
 // Config holds all runtime configuration for the puzzle-generator service.
 type Config struct {
-	Server  ServerConfig
-	Lichess LichessConfig
+	Server      ServerConfig
+	Lichess     LichessConfig
+	OpenRouter  OpenRouterConfig
+	HuggingFace HuggingFaceConfig
 }
 
 // ServerConfig holds HTTP server settings.
@@ -29,6 +32,21 @@ type LichessConfig struct {
 	Timeout  time.Duration
 }
 
+type OpenRouterConfig struct {
+	BaseURL string
+	APIKey  string
+	Model   string
+	Timeout time.Duration
+}
+
+type HuggingFaceConfig struct {
+	BaseURL string
+	Dataset string
+	Config  string
+	Split   string
+	Timeout time.Duration
+}
+
 // Load reads configuration from environment variables and returns a Config.
 // Sensible defaults are provided for every field.
 func Load() (*Config, error) {
@@ -42,8 +60,24 @@ func Load() (*Config, error) {
 		},
 		Lichess: LichessConfig{
 			BaseURL:  getEnv("LICHESS_BASE_URL", "https://lichess.org"),
-			APIToken: getEnv("LICHESS_API_TOKEN", ""),
+			APIToken: getEnvOrFile("LICHESS_API_TOKEN", ""),
 			Timeout:  parseDuration("LICHESS_TIMEOUT", 10*time.Second),
+		},
+		OpenRouter: OpenRouterConfig{
+			BaseURL: getEnv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+			APIKey: firstNonEmpty(
+				getEnvOrFile("OPEN_ROUTER_API_KEY", ""),
+				getEnvOrFile("OPENROUTER_API_KEY", ""),
+			),
+			Model:   getEnv("OPENROUTER_MODEL", "liquid/lfm-2.5-1.2b-instruct:free"),
+			Timeout: parseDuration("OPENROUTER_TIMEOUT", 20*time.Second),
+		},
+		HuggingFace: HuggingFaceConfig{
+			BaseURL: getEnv("HUGGINGFACE_BASE_URL", "https://datasets-server.huggingface.co"),
+			Dataset: getEnv("HUGGINGFACE_DATASET", "Lichess/chess-puzzles"),
+			Config:  getEnv("HUGGINGFACE_DATASET_CONFIG", "default"),
+			Split:   getEnv("HUGGINGFACE_DATASET_SPLIT", "train"),
+			Timeout: parseDuration("HUGGINGFACE_TIMEOUT", 15*time.Second),
 		},
 	}
 
@@ -83,4 +117,36 @@ func parseDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+func getEnvOrFile(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+
+	filePath := strings.TrimSpace(os.Getenv(key + "_FILE"))
+	if filePath == "" {
+		return fallback
+	}
+
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return fallback
+	}
+
+	trimmed := strings.TrimSpace(string(content))
+	if trimmed == "" {
+		return fallback
+	}
+
+	return trimmed
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

@@ -25,5 +25,7 @@ func (h *PuzzleHandler) handleServiceError(c echo.Context, err error) error {
 func isValidationError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "unknown difficulty") ||
-		strings.Contains(msg, "invalid ID format")
+		strings.Contains(msg, "invalid ID format") ||
+		strings.Contains(msg, "prompt is required") ||
+		strings.Contains(msg, "prompt must be")
 }

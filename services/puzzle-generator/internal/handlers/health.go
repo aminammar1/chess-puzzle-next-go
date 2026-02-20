@@ -14,6 +14,12 @@ type HealthResponse struct {
 }
 
 // Health handles GET /health – used by Docker and load balancers.
+// @Summary Service health
+// @Description Health probe endpoint
+// @Tags health
+// @Produce json
+// @Success 200 {object} handlers.HealthResponse
+// @Router /health [get]
 func Health(c echo.Context) error {
 	return c.JSON(http.StatusOK, HealthResponse{
 		Status:  "ok",

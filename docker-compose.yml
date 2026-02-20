@@ -7,13 +7,22 @@ services:
     restart: unless-stopped
     ports:
       - "${PUZZLE_GENERATOR_PORT:-8080}:8080"
+    env_file:
+      - ./services/puzzle-generator/.env
     environment:
       SERVER_PORT: "8080"
       SERVER_READ_TIMEOUT: "15s"
       SERVER_WRITE_TIMEOUT: "15s"
       LICHESS_BASE_URL: "${LICHESS_BASE_URL:-https://lichess.org}"
-      LICHESS_API_TOKEN: "${LICHESS_API_TOKEN:-}"
       LICHESS_TIMEOUT: "10s"
+      OPENROUTER_BASE_URL: "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
+      OPENROUTER_MODEL: "${OPENROUTER_MODEL:-liquid/lfm-2.5-1.2b-instruct:free}"
+      OPENROUTER_TIMEOUT: "${OPENROUTER_TIMEOUT:-20s}"
+      HUGGINGFACE_BASE_URL: "${HUGGINGFACE_BASE_URL:-https://datasets-server.huggingface.co}"
+      HUGGINGFACE_DATASET: "${HUGGINGFACE_DATASET:-Lichess/chess-puzzles}"
+      HUGGINGFACE_DATASET_CONFIG: "${HUGGINGFACE_DATASET_CONFIG:-default}"
+      HUGGINGFACE_DATASET_SPLIT: "${HUGGINGFACE_DATASET_SPLIT:-train}"
+      HUGGINGFACE_TIMEOUT: "${HUGGINGFACE_TIMEOUT:-15s}"
     networks:
       - chess-net
     healthcheck:

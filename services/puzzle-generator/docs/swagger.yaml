@@ -1,0 +1,224 @@
+basePath: /api/v1
+definitions:
+  handlers.HealthResponse:
+    properties:
+      service:
+        type: string
+      status:
+        type: string
+      version:
+        type: string
+    type: object
+  models.AIPuzzleRequest:
+    properties:
+      difficulty:
+        $ref: '#/definitions/models.DifficultyLevel'
+      prompt:
+        type: string
+    type: object
+  models.DifficultyLevel:
+    enum:
+    - easy
+    - medium
+    - hard
+    type: string
+    x-enum-varnames:
+    - DifficultyEasy
+    - DifficultyMedium
+    - DifficultyHard
+  models.ErrorResponse:
+    properties:
+      details:
+        type: string
+      error:
+        type: string
+    type: object
+  models.Puzzle:
+    properties:
+      difficulty:
+        $ref: '#/definitions/models.DifficultyLevel'
+      fen:
+        type: string
+      gameUrl:
+        type: string
+      id:
+        type: string
+      initialPly:
+        type: integer
+      moves:
+        items:
+          type: string
+        type: array
+      nbPlays:
+        type: integer
+      popularity:
+        type: integer
+      rating:
+        type: integer
+      ratingDeviation:
+        type: integer
+      source:
+        type: string
+      themes:
+        items:
+          type: string
+        type: array
+    type: object
+info:
+  contact: {}
+  description: Chess puzzle generator service (Lichess, AI via OpenRouter, and Hugging
+    Face dataset).
+  title: Puzzle Generator API
+  version: "1.0"
+paths:
+  /health:
+    get:
+      description: Health probe endpoint
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.HealthResponse'
+      summary: Service health
+      tags:
+      - health
+  /puzzle:
+    get:
+      description: Returns a random puzzle (Lichess source) filtered by difficulty
+      parameters:
+      - description: easy|medium|hard
+        enum:
+        - easy
+        - medium
+        - hard
+        in: query
+        name: difficulty
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Puzzle'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Get puzzle by difficulty
+      tags:
+      - puzzle
+  /puzzle/{id}:
+    get:
+      description: Returns a puzzle by Lichess puzzle identifier
+      parameters:
+      - description: Puzzle ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Puzzle'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Get puzzle by ID
+      tags:
+      - puzzle
+  /puzzle/ai:
+    post:
+      consumes:
+      - application/json
+      description: Generates one custom puzzle from OpenRouter model
+      parameters:
+      - description: AI puzzle request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.AIPuzzleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Puzzle'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Generate puzzle from AI
+      tags:
+      - puzzle
+  /puzzle/daily:
+    get:
+      description: Returns Lichess daily puzzle
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Puzzle'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Get daily puzzle
+      tags:
+      - puzzle
+  /puzzle/dataset:
+    get:
+      description: Returns one random puzzle from Hugging Face Lichess dataset
+      parameters:
+      - description: easy|medium|hard
+        enum:
+        - easy
+        - medium
+        - hard
+        in: query
+        name: difficulty
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Puzzle'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Get puzzle from dataset
+      tags:
+      - puzzle
+schemes:
+- http
+- https
+swagger: "2.0"

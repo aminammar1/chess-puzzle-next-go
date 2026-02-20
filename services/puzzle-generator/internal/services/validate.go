@@ -23,6 +23,19 @@ func validateDifficulty(d models.DifficultyLevel) error {
 	}
 }
 
+func validateAIPuzzleRequest(req models.AIPuzzleRequest) error {
+	if strings.TrimSpace(req.Prompt) == "" {
+		return fmt.Errorf("puzzle: prompt is required")
+	}
+	if len(strings.TrimSpace(req.Prompt)) < 8 {
+		return fmt.Errorf("puzzle: prompt must be at least 8 characters")
+	}
+	if err := validateDifficulty(req.Difficulty); err != nil {
+		return err
+	}
+	return nil
+}
+
 // extractFENFromPGN parses the [FEN "..."] header from a PGN string.
 func extractFENFromPGN(pgn string) string {
 	re := regexp.MustCompile(`\[FEN "([^"]+)"\]`)

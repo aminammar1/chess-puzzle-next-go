@@ -21,6 +21,7 @@ type LichessAPI interface {
 type OpenRouterAPI interface {
 	IsConfigured() bool
 	CreateCompletion(ctx context.Context, messages []openrouter.Message) (string, error)
+	CreateCompletionWithModel(ctx context.Context, model string, messages []openrouter.Message) (string, error)
 }
 
 type DatasetAPI interface {
@@ -29,12 +30,18 @@ type DatasetAPI interface {
 
 // PuzzleService orchestrates puzzle retrieval and enrichment.
 type PuzzleService struct {
-	lichess LichessAPI
-	ai      OpenRouterAPI
-	dataset DatasetAPI
+	lichess        LichessAPI
+	ai             OpenRouterAPI
+	dataset        DatasetAPI
+	fallbackModels []string
 
 	mu        sync.Mutex
 	recentIDs map[models.DifficultyLevel][]string
+}
+
+// SetFallbackModels configures additional models to try if the primary fails.
+func (s *PuzzleService) SetFallbackModels(models []string) {
+	s.fallbackModels = models
 }
 
 // New returns a PuzzleService backed by the given Lichess client.
@@ -120,31 +127,51 @@ func (s *PuzzleService) GenerateFromAI(ctx context.Context, req models.AIPuzzleR
 		return nil, err
 	}
 
-	messages := buildAIPromptMessages(req)
-	var parseErr error
-	var content string
-
-	for attempt := 0; attempt < 2; attempt++ {
-		generated, err := s.ai.CreateCompletion(ctx, messages)
-		if err != nil {
-			return nil, fmt.Errorf("puzzle: generate with openrouter: %w", err)
-		}
-		content = generated
-
-		puzzle, err := parseAIPuzzleResponse(content, req.Difficulty)
-		if err == nil {
-			if puzzle.ID == "" {
-				puzzle.ID = fmt.Sprintf("ai-%d", time.Now().UnixNano())
-			}
-			puzzle.Source = "ai-openrouter"
-			return puzzle, nil
-		}
-
-		parseErr = err
-		messages = buildAICorrectionMessages(req, content, err)
+	// Build the list of models to try: primary first, then fallbacks
+	modelsToTry := []string{""} // empty string = use default model
+	for _, m := range s.fallbackModels {
+		modelsToTry = append(modelsToTry, m)
 	}
 
-	return nil, fmt.Errorf("puzzle: parse AI response: %w", parseErr)
+	var lastErr error
+	for _, model := range modelsToTry {
+		messages := buildAIPromptMessages(req)
+		var parseErr error
+		var content string
+
+		for attempt := 0; attempt < 2; attempt++ {
+			var generated string
+			var err error
+			if model == "" {
+				generated, err = s.ai.CreateCompletion(ctx, messages)
+			} else {
+				generated, err = s.ai.CreateCompletionWithModel(ctx, model, messages)
+			}
+			if err != nil {
+				lastErr = fmt.Errorf("model %q: %w", model, err)
+				break // try next model
+			}
+			content = generated
+
+			puzzle, err := parseAIPuzzleResponse(content, req.Difficulty)
+			if err == nil {
+				if puzzle.ID == "" {
+					puzzle.ID = fmt.Sprintf("ai-%d", time.Now().UnixNano())
+				}
+				puzzle.Source = "ai-openrouter"
+				return puzzle, nil
+			}
+
+			parseErr = err
+			messages = buildAICorrectionMessages(req, content, err)
+		}
+
+		if parseErr != nil {
+			lastErr = fmt.Errorf("model %q parse failed: %w", model, parseErr)
+		}
+	}
+
+	return nil, fmt.Errorf("puzzle: all models failed to generate valid puzzle: %w", lastErr)
 }
 
 func (s *PuzzleService) GenerateFromDataset(ctx context.Context, difficulty models.DifficultyLevel) (*models.Puzzle, error) {
@@ -165,9 +192,20 @@ func (s *PuzzleService) GenerateFromDataset(ctx context.Context, difficulty mode
 
 func (s *PuzzleService) enrich(raw *models.LichessPuzzleResponse) *models.Puzzle {
 	p := raw.ToCanonical()
-	if fen := extractFENFromPGN(raw.Game.Pgn); fen != "" {
-		p.FEN = fen
+
+	if raw.Game.Pgn != "" {
+		fen, setupMove := extractPuzzlePosition(raw.Game.Pgn, raw.Puzzle.InitialPly)
+		if fen != "" {
+			p.FEN = fen
+		}
+		// Lichess solution does NOT include the opponent's setup move.
+		// The frontend expects moves[0] to be the computer's (opponent) setup
+		// move, so we must prepend it.
+		if setupMove != "" {
+			p.Moves = append([]string{setupMove}, p.Moves...)
+		}
 	}
+
 	return p
 }
 

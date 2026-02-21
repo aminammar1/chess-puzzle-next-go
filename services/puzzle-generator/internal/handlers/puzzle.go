@@ -1,12 +1,13 @@
 package handlers
 
 import (
-	"context"
-	"net/http"
-	"strings"
+"context"
+"net/http"
+"strings"
 
-	"github.com/chess-puzzle-next/puzzle-generator/internal/models"
-	"github.com/labstack/echo/v4"
+"github.com/chess-puzzle-next/puzzle-generator/internal/middleware"
+"github.com/chess-puzzle-next/puzzle-generator/internal/models"
+"github.com/labstack/echo/v4"
 )
 
 // puzzleProvider is the dependency PuzzleHandler needs from the service layer.
@@ -33,7 +34,10 @@ func (h *PuzzleHandler) Register(g *echo.Group) {
 	g.GET("/puzzle", h.GetPuzzle)
 	g.GET("/puzzle/daily", h.GetDailyPuzzle)
 	g.GET("/puzzle/:id", h.GetPuzzleByID)
-	g.POST("/puzzle/ai", h.GeneratePuzzleFromAI)
+	
+	// AI puzzle generation is a premium feature
+	g.POST("/puzzle/ai", h.GeneratePuzzleFromAI, middleware.PremiumCheck())
+	
 	g.GET("/puzzle/dataset", h.GetPuzzleFromDataset)
 }
 
@@ -110,9 +114,9 @@ func (h *PuzzleHandler) GeneratePuzzleFromAI(c echo.Context) error {
 	var req models.AIPuzzleRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, models.ErrorResponse{
-			Error:   "invalid request",
-			Details: "invalid JSON body",
-		})
+Error:   "invalid request",
+Details: "invalid JSON body",
+})
 	}
 
 	if req.Difficulty == "" {

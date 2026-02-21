@@ -29,6 +29,7 @@ type chatCompletionRequest struct {
 	Model       string    `json:"model"`
 	Messages    []Message `json:"messages"`
 	Temperature float64   `json:"temperature"`
+	MaxTokens   int       `json:"max_tokens,omitempty"`
 }
 
 type chatCompletionResponse struct {
@@ -70,6 +71,66 @@ func (c *Client) IsConfigured() bool {
 	return c.apiKey != "" && c.model != ""
 }
 
+func (c *Client) CreateCompletionWithModel(ctx context.Context, model string, messages []Message) (string, error) {
+	if c.apiKey == "" {
+		return "", fmt.Errorf("openrouter: missing API key")
+	}
+	if model == "" {
+		model = c.model
+	}
+
+	payload := chatCompletionRequest{
+		Model:       model,
+		Messages:    messages,
+		Temperature: 0.7,
+		MaxTokens:   1024,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("openrouter: marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("openrouter: build request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("HTTP-Referer", "https://github.com/aminammar1/chess-puzzle-next-go")
+	req.Header.Set("X-Title", "chess-puzzle-next")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("openrouter: http request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("openrouter: read body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("openrouter: unexpected status %d: %s", resp.StatusCode, truncate(string(respBody), 300))
+	}
+
+	var decoded chatCompletionResponse
+	if err := json.Unmarshal(respBody, &decoded); err != nil {
+		return "", fmt.Errorf("openrouter: decode response: %w", err)
+	}
+	if len(decoded.Choices) == 0 {
+		return "", fmt.Errorf("openrouter: empty choices in response")
+	}
+
+	content := strings.TrimSpace(decoded.Choices[0].Message.Content)
+	if content == "" {
+		return "", fmt.Errorf("openrouter: empty content in response")
+	}
+
+	return content, nil
+}
+
 func (c *Client) CreateCompletion(ctx context.Context, messages []Message) (string, error) {
 	if !c.IsConfigured() {
 		return "", fmt.Errorf("openrouter: missing API key or model")
@@ -79,6 +140,7 @@ func (c *Client) CreateCompletion(ctx context.Context, messages []Message) (stri
 		Model:       c.model,
 		Messages:    messages,
 		Temperature: 0.7,
+		MaxTokens:   1024,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

@@ -49,5 +49,11 @@ docker-up-detach: ## Build and start (detached)
 docker-down: ## Stop and remove containers
 	docker compose down
 
+docker-logs: ## Tail container logs
+	docker compose logs -f
+
+redis-cli: ## Open Redis CLI shell
+	docker compose exec redis redis-cli
+
 docker-logs: ## Tail service logs
 	docker compose logs -f

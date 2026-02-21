@@ -13,6 +13,7 @@ import (
 // Config holds all runtime configuration for the puzzle-generator service.
 type Config struct {
 	Server      ServerConfig
+	Redis       RedisConfig
 	Lichess     LichessConfig
 	OpenRouter  OpenRouterConfig
 	HuggingFace HuggingFaceConfig
@@ -33,10 +34,11 @@ type LichessConfig struct {
 }
 
 type OpenRouterConfig struct {
-	BaseURL string
-	APIKey  string
-	Model   string
-	Timeout time.Duration
+	BaseURL        string
+	APIKey         string
+	Model          string
+	FallbackModels []string
+	Timeout        time.Duration
 }
 
 type HuggingFaceConfig struct {
@@ -45,6 +47,13 @@ type HuggingFaceConfig struct {
 	Config  string
 	Split   string
 	Timeout time.Duration
+}
+
+// RedisConfig holds Redis connection settings.
+type RedisConfig struct {
+	URL            string
+	SessionTTL     time.Duration
+	DailyPuzzleTTL time.Duration
 }
 
 // Load reads configuration from environment variables and returns a Config.
@@ -56,7 +65,12 @@ func Load() (*Config, error) {
 		Server: ServerConfig{
 			Port:         getEnv("SERVER_PORT", "8080"),
 			ReadTimeout:  parseDuration("SERVER_READ_TIMEOUT", 15*time.Second),
-			WriteTimeout: parseDuration("SERVER_WRITE_TIMEOUT", 15*time.Second),
+			WriteTimeout: parseDuration("SERVER_WRITE_TIMEOUT", 120*time.Second),
+		},
+		Redis: RedisConfig{
+			URL:            getEnv("REDIS_URL", "redis://localhost:6379"),
+			SessionTTL:     parseDuration("REDIS_SESSION_TTL", 24*time.Hour),
+			DailyPuzzleTTL: parseDuration("REDIS_DAILY_PUZZLE_TTL", 25*time.Hour),
 		},
 		Lichess: LichessConfig{
 			BaseURL:  getEnv("LICHESS_BASE_URL", "https://lichess.org"),
@@ -69,8 +83,9 @@ func Load() (*Config, error) {
 				getEnvOrFile("OPEN_ROUTER_API_KEY", ""),
 				getEnvOrFile("OPENROUTER_API_KEY", ""),
 			),
-			Model:   getEnv("OPENROUTER_MODEL", "liquid/lfm-2.5-1.2b-instruct:free"),
-			Timeout: parseDuration("OPENROUTER_TIMEOUT", 20*time.Second),
+			Model:          getEnv("OPENROUTER_MODEL", "deepseek/deepseek-r1-0528:free"),
+			FallbackModels: parseFallbackModels(getEnv("OPENROUTER_FALLBACK_MODELS", "qwen/qwen3-8b:free,mistralai/devstral-small:free,deepseek/deepseek-r1-0528:free")),
+			Timeout:        parseDuration("OPENROUTER_TIMEOUT", 30*time.Second),
 		},
 		HuggingFace: HuggingFaceConfig{
 			BaseURL: getEnv("HUGGINGFACE_BASE_URL", "https://datasets-server.huggingface.co"),
@@ -140,6 +155,20 @@ func getEnvOrFile(key, fallback string) string {
 	}
 
 	return trimmed
+}
+
+func parseFallbackModels(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var models []string
+	for _, m := range strings.Split(raw, ",") {
+		m = strings.TrimSpace(m)
+		if m != "" {
+			models = append(models, m)
+		}
+	}
+	return models
 }
 
 func firstNonEmpty(values ...string) string {

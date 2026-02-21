@@ -1,4 +1,21 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: chess-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    networks:
+      - chess-net
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
   puzzle-generator:
     build:
       context: ./services/puzzle-generator
@@ -12,17 +29,22 @@ services:
     environment:
       SERVER_PORT: "8080"
       SERVER_READ_TIMEOUT: "15s"
-      SERVER_WRITE_TIMEOUT: "15s"
+      SERVER_WRITE_TIMEOUT: "120s"
+      REDIS_URL: "redis://redis:6379"
       LICHESS_BASE_URL: "${LICHESS_BASE_URL:-https://lichess.org}"
       LICHESS_TIMEOUT: "10s"
       OPENROUTER_BASE_URL: "${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
-      OPENROUTER_MODEL: "${OPENROUTER_MODEL:-liquid/lfm-2.5-1.2b-instruct:free}"
-      OPENROUTER_TIMEOUT: "${OPENROUTER_TIMEOUT:-20s}"
+      OPENROUTER_MODEL: "${OPENROUTER_MODEL:-deepseek/deepseek-r1-0528:free}"
+      OPENROUTER_FALLBACK_MODELS: "${OPENROUTER_FALLBACK_MODELS:-qwen/qwen3-8b:free,mistralai/devstral-small:free,google/gemma-3-27b-it:free}"
+      OPENROUTER_TIMEOUT: "${OPENROUTER_TIMEOUT:-60s}"
       HUGGINGFACE_BASE_URL: "${HUGGINGFACE_BASE_URL:-https://datasets-server.huggingface.co}"
       HUGGINGFACE_DATASET: "${HUGGINGFACE_DATASET:-Lichess/chess-puzzles}"
       HUGGINGFACE_DATASET_CONFIG: "${HUGGINGFACE_DATASET_CONFIG:-default}"
       HUGGINGFACE_DATASET_SPLIT: "${HUGGINGFACE_DATASET_SPLIT:-train}"
       HUGGINGFACE_TIMEOUT: "${HUGGINGFACE_TIMEOUT:-15s}"
+    depends_on:
+      redis:
+        condition: service_healthy
     networks:
       - chess-net
     healthcheck:
@@ -31,6 +53,10 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  redis-data:
+
 
 networks:
   chess-net:

@@ -1,7 +1,15 @@
 GO_SVC     := ./services/puzzle-generator
 GO_VERSION := 1.25.7
 
-.PHONY: help build run test vet tidy clean swagger swagger-install swagger-serve docker-up docker-up-detach docker-down docker-logs
+PY_SVC     := ./services/voice-to-move
+PY_VENV    := $(PY_SVC)/venv
+PY_BIN     := $(PY_VENV)/bin
+PY         := python3.14
+PY_PORT    := 8001
+
+.PHONY: help build run test vet tidy clean swagger swagger-install swagger-serve \
+        docker-up docker-up-detach docker-down docker-logs \
+        voice-venv voice-install voice-run voice-dev voice-test voice-freeze voice-clean voice-docs
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*##"}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -54,3 +62,32 @@ docker-logs: ## Tail container logs
 
 redis-cli: ## Open Redis CLI shell
 	docker compose exec redis redis-cli
+
+# ---------------------------------------------------------------------------
+# Voice-to-Move (Python / FastAPI)
+# ---------------------------------------------------------------------------
+
+voice-venv: ## Create Python 3.14 virtualenv
+	$(PY) -m venv $(PY_VENV)
+
+voice-install: voice-venv ## Install Python dependencies
+	$(PY_BIN)/pip install --upgrade pip
+	$(PY_BIN)/pip install -r $(PY_SVC)/requirements.txt
+
+voice-run: ## Run voice service (production)
+	cd $(PY_SVC) && $(CURDIR)/$(PY_BIN)/uvicorn app.main:app --host 0.0.0.0 --port $(PY_PORT)
+
+voice-dev: ## Run voice service (dev with auto-reload)
+	cd $(PY_SVC) && $(CURDIR)/$(PY_BIN)/uvicorn app.main:app --host 0.0.0.0 --port $(PY_PORT) --reload
+
+voice-test: ## Test voice health endpoint
+	@curl -s http://localhost:$(PY_PORT)/health | python3 -m json.tool
+
+voice-freeze: ## Freeze current Python deps to requirements.txt
+	$(PY_BIN)/pip freeze > $(PY_SVC)/requirements.txt
+
+voice-clean: ## Remove Python virtualenv
+	rm -rf $(PY_VENV)
+
+voice-docs: ## Open voice service Swagger docs URL
+	@echo "http://localhost:$(PY_PORT)/docs"

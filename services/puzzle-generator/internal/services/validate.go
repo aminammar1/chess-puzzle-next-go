@@ -37,14 +37,7 @@ func validateAIPuzzleRequest(req models.AIPuzzleRequest) error {
 	return nil
 }
 
-// extractFENFromPGN parses the [FEN "..."] header from a PGN string.
-func extractFENFromPGN(pgn string) string {
-	re := regexp.MustCompile(`\[FEN "([^"]+)"\]`)
-	if m := re.FindStringSubmatch(pgn); len(m) > 1 {
-		return m[1]
-	}
-	return ""
-}
+
 
 // extractPuzzlePosition parses a PGN, derives the FEN at the given ply, and
 // extracts the setup move (the PGN move at that ply) in UCI notation.

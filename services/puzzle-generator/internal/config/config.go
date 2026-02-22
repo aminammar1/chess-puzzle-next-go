@@ -15,7 +15,7 @@ type Config struct {
 	Server      ServerConfig
 	Redis       RedisConfig
 	Lichess     LichessConfig
-	OpenRouter  OpenRouterConfig
+	NVIDIA      NVIDIAConfig
 	HuggingFace HuggingFaceConfig
 }
 
@@ -33,12 +33,11 @@ type LichessConfig struct {
 	Timeout  time.Duration
 }
 
-type OpenRouterConfig struct {
-	BaseURL        string
-	APIKey         string
-	Model          string
-	FallbackModels []string
-	Timeout        time.Duration
+type NVIDIAConfig struct {
+	BaseURL string
+	APIKey  string
+	Model   string
+	Timeout time.Duration
 }
 
 type HuggingFaceConfig struct {
@@ -77,15 +76,11 @@ func Load() (*Config, error) {
 			APIToken: getEnvOrFile("LICHESS_API_TOKEN", ""),
 			Timeout:  parseDuration("LICHESS_TIMEOUT", 10*time.Second),
 		},
-		OpenRouter: OpenRouterConfig{
-			BaseURL: getEnv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-			APIKey: firstNonEmpty(
-				getEnvOrFile("OPEN_ROUTER_API_KEY", ""),
-				getEnvOrFile("OPENROUTER_API_KEY", ""),
-			),
-			Model:          getEnv("OPENROUTER_MODEL", "deepseek/deepseek-r1-0528:free"),
-			FallbackModels: parseFallbackModels(getEnv("OPENROUTER_FALLBACK_MODELS", "qwen/qwen3-8b:free,mistralai/devstral-small:free,deepseek/deepseek-r1-0528:free")),
-			Timeout:        parseDuration("OPENROUTER_TIMEOUT", 30*time.Second),
+		NVIDIA: NVIDIAConfig{
+			BaseURL: getEnv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+			APIKey:  getEnvOrFile("NVIDIA_API_KEY", ""),
+			Model:   getEnv("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct"),
+			Timeout: parseDuration("NVIDIA_TIMEOUT", 30*time.Second),
 		},
 		HuggingFace: HuggingFaceConfig{
 			BaseURL: getEnv("HUGGINGFACE_BASE_URL", "https://datasets-server.huggingface.co"),
@@ -155,27 +150,4 @@ func getEnvOrFile(key, fallback string) string {
 	}
 
 	return trimmed
-}
-
-func parseFallbackModels(raw string) []string {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	var models []string
-	for _, m := range strings.Split(raw, ",") {
-		m = strings.TrimSpace(m)
-		if m != "" {
-			models = append(models, m)
-		}
-	}
-	return models
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import Navbar from "@/components/layout/Navbar";
+import { useSubscription } from "@/lib/subscription";
 import { cn } from "@/lib/utils";
 
 const modes = [
@@ -38,14 +39,15 @@ const modes = [
     color: "purple",
     border: "border-purple-800/30 hover:border-purple-600/50",
     iconBg: "bg-purple-900/30 text-purple-400",
-    tag: "🔒 Pro",
+    tag: "Pro",
     tagColor: "bg-purple-900/30 text-purple-400 border-purple-700/30",
-    locked: true,
+    premium: true,
   },
 ];
 
 export default function PuzzlesPage() {
   const router = useRouter();
+  const { hasAIAccess } = useSubscription();
 
   return (
     <div className="min-h-screen bg-[var(--bg-deep)]">
@@ -91,7 +93,7 @@ export default function PuzzlesPage() {
                       mode.tagColor
                     )}
                   >
-                    {mode.tag}
+                    {(mode as any).premium && !hasAIAccess ? "🔒 " : ""}{mode.tag}
                   </span>
                 </div>
                 <p className="mt-1 text-sm text-[var(--text-muted)]">{mode.description}</p>

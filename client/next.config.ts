@@ -13,6 +13,10 @@ const nextConfig = {
       },
     ];
   },
+  serverExternalPackages: [],
+  experimental: {
+    proxyTimeout: 120_000,
+  },
 };
 
 export default nextConfig;

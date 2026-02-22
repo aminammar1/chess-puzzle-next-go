@@ -3,11 +3,12 @@ package services
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
 	"github.com/chess-puzzle-next/puzzle-generator/internal/models"
-	"github.com/chess-puzzle-next/puzzle-generator/pkg/openrouter"
+	"github.com/chess-puzzle-next/puzzle-generator/pkg/nvidia"
 )
 
 // LichessAPI defines the subset of lichess.Client used by PuzzleService.
@@ -18,34 +19,30 @@ type LichessAPI interface {
 	GetNextPuzzle(ctx context.Context, difficulty string) (*models.LichessPuzzleResponse, error)
 }
 
-type OpenRouterAPI interface {
+// AIAPI abstracts the LLM inference provider (NVIDIA).
+type AIAPI interface {
 	IsConfigured() bool
-	CreateCompletion(ctx context.Context, messages []openrouter.Message) (string, error)
-	CreateCompletionWithModel(ctx context.Context, model string, messages []openrouter.Message) (string, error)
+	CreateCompletion(ctx context.Context, messages []nvidia.Message) (string, error)
 }
 
+// DatasetAPI abstracts access to the HuggingFace puzzle dataset.
 type DatasetAPI interface {
 	GetRandomPuzzle(ctx context.Context, difficulty models.DifficultyLevel) (*models.Puzzle, error)
+	GetCandidatePuzzles(ctx context.Context, difficulty models.DifficultyLevel, count int) ([]*models.Puzzle, error)
 }
 
 // PuzzleService orchestrates puzzle retrieval and enrichment.
 type PuzzleService struct {
-	lichess        LichessAPI
-	ai             OpenRouterAPI
-	dataset        DatasetAPI
-	fallbackModels []string
+	lichess LichessAPI
+	ai      AIAPI
+	dataset DatasetAPI
 
 	mu        sync.Mutex
 	recentIDs map[models.DifficultyLevel][]string
 }
 
-// SetFallbackModels configures additional models to try if the primary fails.
-func (s *PuzzleService) SetFallbackModels(models []string) {
-	s.fallbackModels = models
-}
-
-// New returns a PuzzleService backed by the given Lichess client.
-func New(lc LichessAPI, ai OpenRouterAPI, dataset DatasetAPI) *PuzzleService {
+// New returns a PuzzleService backed by the given clients.
+func New(lc LichessAPI, ai AIAPI, dataset DatasetAPI) *PuzzleService {
 	return &PuzzleService{
 		lichess: lc,
 		ai:      ai,
@@ -119,59 +116,76 @@ func (s *PuzzleService) GetDaily(ctx context.Context) (*models.Puzzle, error) {
 	return s.enrich(raw), nil
 }
 
+// GenerateFromAI uses a RAG (Retrieval-Augmented Generation) pipeline:
+//  1. Fetch candidate puzzles from the HuggingFace dataset.
+//  2. Send the candidates + user prompt to the NVIDIA model.
+//  3. The model selects the best-matching puzzle.
 func (s *PuzzleService) GenerateFromAI(ctx context.Context, req models.AIPuzzleRequest) (*models.Puzzle, error) {
 	if s.ai == nil || !s.ai.IsConfigured() {
-		return nil, fmt.Errorf("puzzle: AI provider is not configured")
+		return nil, fmt.Errorf("puzzle: AI provider (NVIDIA) is not configured")
+	}
+	if s.dataset == nil {
+		return nil, fmt.Errorf("puzzle: dataset provider is not configured (needed for RAG)")
 	}
 	if err := validateAIPuzzleRequest(req); err != nil {
 		return nil, err
 	}
 
-	// Build the list of models to try: primary first, then fallbacks
-	modelsToTry := []string{""} // empty string = use default model
-	for _, m := range s.fallbackModels {
-		modelsToTry = append(modelsToTry, m)
+	// --- Step 1: Retrieve candidate puzzles from the dataset ---
+	const candidateCount = 8
+	t0 := time.Now()
+	candidates, err := s.dataset.GetCandidatePuzzles(ctx, req.Difficulty, candidateCount)
+	if err != nil {
+		return nil, fmt.Errorf("puzzle: fetch RAG candidates: %w", err)
 	}
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("puzzle: no candidate puzzles found for RAG")
+	}
+	log.Printf("[RAG] fetched %d candidates in %s", len(candidates), time.Since(t0))
 
+	// --- Step 2 & 3: Ask the AI to select the best match ---
+	messages := buildRAGSelectionPrompt(req, candidates)
+
+	const maxAttempts = 2
 	var lastErr error
-	for _, model := range modelsToTry {
-		messages := buildAIPromptMessages(req)
-		var parseErr error
-		var content string
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		t1 := time.Now()
+		content, err := s.ai.CreateCompletion(ctx, messages)
+		log.Printf("[RAG] NVIDIA attempt=%d elapsed=%s err=%v content=%q", attempt, time.Since(t1), err, truncateStr(content, 200))
 
-		for attempt := 0; attempt < 2; attempt++ {
-			var generated string
-			var err error
-			if model == "" {
-				generated, err = s.ai.CreateCompletion(ctx, messages)
-			} else {
-				generated, err = s.ai.CreateCompletionWithModel(ctx, model, messages)
-			}
-			if err != nil {
-				lastErr = fmt.Errorf("model %q: %w", model, err)
-				break // try next model
-			}
-			content = generated
-
-			puzzle, err := parseAIPuzzleResponse(content, req.Difficulty)
-			if err == nil {
-				if puzzle.ID == "" {
-					puzzle.ID = fmt.Sprintf("ai-%d", time.Now().UnixNano())
-				}
-				puzzle.Source = "ai-openrouter"
-				return puzzle, nil
-			}
-
-			parseErr = err
-			messages = buildAICorrectionMessages(req, content, err)
+		if err != nil {
+			lastErr = fmt.Errorf("nvidia completion: %w", err)
+			break // API error — no point retrying the same request
 		}
 
-		if parseErr != nil {
-			lastErr = fmt.Errorf("model %q parse failed: %w", model, parseErr)
+		puzzle, err := parseRAGSelectionResponse(content, candidates)
+		if err == nil {
+			puzzle.Source = "ai-rag"
+			log.Printf("[RAG] selected puzzle index from AI, total=%s", time.Since(t0))
+			return puzzle, nil
 		}
+
+		// Build correction prompt and retry.
+		lastErr = err
+		messages = buildRAGRetryPrompt(req, candidates, content, err)
 	}
 
-	return nil, fmt.Errorf("puzzle: all models failed to generate valid puzzle: %w", lastErr)
+	// Fallback: if AI selection failed, return the first candidate.
+	if len(candidates) > 0 {
+		log.Printf("[RAG] falling back to first candidate, lastErr=%v, total=%s", lastErr, time.Since(t0))
+		p := candidates[0]
+		p.Source = "ai-rag-fallback"
+		return p, nil
+	}
+
+	return nil, fmt.Errorf("puzzle: RAG pipeline failed: %w", lastErr)
+}
+
+func truncateStr(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
 }
 
 func (s *PuzzleService) GenerateFromDataset(ctx context.Context, difficulty models.DifficultyLevel) (*models.Puzzle, error) {

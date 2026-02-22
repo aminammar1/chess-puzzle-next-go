@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/lib/theme";
+import { SubscriptionProvider } from "@/lib/subscription";
 
 export const metadata: Metadata = {
   title: "Chess Puzzles — Master the Art of Tactics",
@@ -23,7 +24,9 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-screen antialiased">
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <SubscriptionProvider>{children}</SubscriptionProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

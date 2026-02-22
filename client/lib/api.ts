@@ -15,6 +15,17 @@ const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
+// Attach premium header automatically when user has a paid plan.
+api.interceptors.request.use((config) => {
+  if (typeof window !== "undefined") {
+    const plan = localStorage.getItem("chess-puzzles-plan");
+    if (plan === "pro" || plan === "elite") {
+      config.headers["X-Premium-User"] = "true";
+    }
+  }
+  return config;
+});
+
 export async function getPuzzleByDifficulty(
   difficulty: DifficultyLevel = "medium"
 ): Promise<Puzzle> {

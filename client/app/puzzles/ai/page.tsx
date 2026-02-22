@@ -6,6 +6,7 @@ import PuzzleSolver from "@/components/puzzle/PuzzleSolver";
 import SubscriptionGate from "@/components/ui/SubscriptionGate";
 import Button from "@/components/ui/Button";
 import { usePuzzleStore } from "@/lib/store";
+import { useSubscription } from "@/lib/subscription";
 import type { DifficultyLevel } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -15,12 +16,9 @@ const difficulties: { level: DifficultyLevel; label: string; color: string; acti
   { level: "hard", label: "Hard", color: "text-red-400", active: "border-red-600/50 bg-red-900/20 text-red-400" },
 ];
 
-// AI puzzle generation is a premium feature — locked by default.
-// In production this would be driven by an auth/subscription context.
-const AI_LOCKED = true;
-
 export default function AIPuzzlePage() {
   const { puzzle, loading, error, loadPuzzle } = usePuzzleStore();
+  const { hasAIAccess } = useSubscription();
   const [started, setStarted] = useState(false);
   const [selectedDifficulty, setSelectedDifficulty] = useState<DifficultyLevel>("medium");
   const [prompt, setPrompt] = useState("");
@@ -53,7 +51,7 @@ export default function AIPuzzlePage() {
         )}
 
         {!started && (
-          <SubscriptionGate feature="AI Puzzle Generation" locked={AI_LOCKED}>
+          <SubscriptionGate feature="AI Puzzle Generation">
             <div className="mx-auto max-w-lg py-12 animate-fadeIn">
               {/* Header */}
               <div className="mb-10 text-center">

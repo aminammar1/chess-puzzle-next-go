@@ -145,12 +145,24 @@ func (c *Client) getRowsCount(ctx context.Context) (int, error) {
 }
 
 func (c *Client) fetchRow(ctx context.Context, offset int) (map[string]any, error) {
+	rows, err := c.fetchRows(ctx, offset, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("huggingface: empty rows response")
+	}
+	return rows[0], nil
+}
+
+// fetchRows fetches `length` rows starting at `offset`.
+func (c *Client) fetchRows(ctx context.Context, offset, length int) ([]map[string]any, error) {
 	params := url.Values{}
 	params.Set("dataset", c.dataset)
 	params.Set("config", c.config)
 	params.Set("split", c.split)
 	params.Set("offset", strconv.Itoa(offset))
-	params.Set("length", "1")
+	params.Set("length", strconv.Itoa(length))
 
 	endpoint := c.baseURL + "/rows?" + params.Encode()
 	body, status, err := c.doGet(ctx, endpoint)
@@ -165,11 +177,66 @@ func (c *Client) fetchRow(ctx context.Context, offset int) (map[string]any, erro
 	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
 		return nil, fmt.Errorf("huggingface: decode rows response: %w", err)
 	}
-	if len(decoded.Rows) == 0 {
-		return nil, fmt.Errorf("huggingface: empty rows response")
+
+	result := make([]map[string]any, 0, len(decoded.Rows))
+	for _, r := range decoded.Rows {
+		result = append(result, r.Row)
+	}
+	return result, nil
+}
+
+// GetCandidatePuzzles fetches a batch of random puzzles from the dataset,
+// optionally filtering by difficulty. Used by the RAG pipeline.
+func (c *Client) GetCandidatePuzzles(ctx context.Context, difficulty models.DifficultyLevel, count int) ([]*models.Puzzle, error) {
+	totalRows, err := c.getRowsCount(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if totalRows == 0 {
+		return nil, fmt.Errorf("huggingface: dataset split is empty")
 	}
 
-	return decoded.Rows[0].Row, nil
+	// Fetch a larger batch in one API call, then filter.
+	batchSize := count * 10
+	if batchSize > 100 {
+		batchSize = 100
+	}
+
+	maxBound := totalRows - batchSize
+	if maxBound < 1 {
+		maxBound = 1
+	}
+
+	offset, err := randomInt(maxBound)
+	if err != nil {
+		return nil, fmt.Errorf("huggingface: random offset: %w", err)
+	}
+
+	rows, err := c.fetchRows(ctx, offset, batchSize)
+	if err != nil {
+		return nil, err
+	}
+
+	var puzzles []*models.Puzzle
+	for _, row := range rows {
+		puzzle, err := toPuzzle(row)
+		if err != nil {
+			continue
+		}
+		if difficulty != "" && puzzle.Difficulty != difficulty {
+			continue
+		}
+		puzzles = append(puzzles, puzzle)
+		if len(puzzles) >= count {
+			break
+		}
+	}
+
+	if len(puzzles) == 0 {
+		return nil, fmt.Errorf("huggingface: no candidate puzzles found for difficulty %q", difficulty)
+	}
+
+	return puzzles, nil
 }
 
 func (c *Client) doGet(ctx context.Context, endpoint string) (string, int, error) {

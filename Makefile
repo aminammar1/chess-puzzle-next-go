@@ -54,6 +54,3 @@ docker-logs: ## Tail container logs
 
 redis-cli: ## Open Redis CLI shell
 	docker compose exec redis redis-cli
-
-docker-logs: ## Tail service logs
-	docker compose logs -f

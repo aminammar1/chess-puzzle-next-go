@@ -10,6 +10,7 @@ const navItems = [
   { href: "/", label: "Home", icon: "♚" },
   { href: "/puzzles", label: "Puzzles", icon: "♞" },
   { href: "/daily", label: "Daily", icon: "♜" },
+  { href: "/pricing", label: "Pro", icon: "♛" },
 ];
 
 const themeOptions: { mode: ThemeMode; label: string; preview: string }[] = [

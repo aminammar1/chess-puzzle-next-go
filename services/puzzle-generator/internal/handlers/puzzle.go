@@ -1,13 +1,13 @@
 package handlers
 
 import (
-"context"
-"net/http"
-"strings"
+	"context"
+	"net/http"
+	"strings"
 
-"github.com/chess-puzzle-next/puzzle-generator/internal/middleware"
-"github.com/chess-puzzle-next/puzzle-generator/internal/models"
-"github.com/labstack/echo/v4"
+	"github.com/chess-puzzle-next/puzzle-generator/internal/middleware"
+	"github.com/chess-puzzle-next/puzzle-generator/internal/models"
+	"github.com/labstack/echo/v4"
 )
 
 // puzzleProvider is the dependency PuzzleHandler needs from the service layer.
@@ -34,10 +34,10 @@ func (h *PuzzleHandler) Register(g *echo.Group) {
 	g.GET("/puzzle", h.GetPuzzle)
 	g.GET("/puzzle/daily", h.GetDailyPuzzle)
 	g.GET("/puzzle/:id", h.GetPuzzleByID)
-	
+
 	// AI puzzle generation is a premium feature
 	g.POST("/puzzle/ai", h.GeneratePuzzleFromAI, middleware.PremiumCheck())
-	
+
 	g.GET("/puzzle/dataset", h.GetPuzzleFromDataset)
 }
 
@@ -100,8 +100,8 @@ func (h *PuzzleHandler) GetPuzzleByID(c echo.Context) error {
 }
 
 // GeneratePuzzleFromAI handles POST /puzzle/ai
-// @Summary Generate puzzle from AI
-// @Description Generates one custom puzzle from OpenRouter model
+// @Summary Generate puzzle from AI (RAG)
+// @Description Uses a RAG pipeline: fetches candidate puzzles from the Lichess dataset and asks the NVIDIA model to select the best match for the user's prompt
 // @Tags puzzle
 // @Accept json
 // @Produce json
@@ -114,9 +114,9 @@ func (h *PuzzleHandler) GeneratePuzzleFromAI(c echo.Context) error {
 	var req models.AIPuzzleRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, models.ErrorResponse{
-Error:   "invalid request",
-Details: "invalid JSON body",
-})
+			Error:   "invalid request",
+			Details: "invalid JSON body",
+		})
 	}
 
 	if req.Difficulty == "" {

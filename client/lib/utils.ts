@@ -41,6 +41,7 @@ export function getSourceLabel(source: string): string {
     case "huggingface-lichess":
       return "Dataset";
     case "ai-openrouter":
+    case "ai-rag":
       return "AI Generated";
     default:
       return source;
@@ -54,6 +55,7 @@ export function getSourceColor(source: string): string {
     case "huggingface-lichess":
       return "bg-blue-500/20 text-blue-400 border-blue-500/30";
     case "ai-openrouter":
+    case "ai-rag":
       return "bg-purple-500/20 text-purple-400 border-purple-500/30";
     default:
       return "bg-gray-500/20 text-gray-400 border-gray-500/30";

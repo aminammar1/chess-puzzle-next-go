@@ -1,19 +1,24 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
+import { useSubscription } from "@/lib/subscription";
 
 interface SubscriptionGateProps {
   feature: string;
   children: React.ReactNode;
-  locked?: boolean;
 }
 
 /**
- * Wraps content that requires a subscription. If locked, shows a blur overlay with upgrade prompt.
- * Set `locked={false}` or omit to show content normally.
+ * Wraps content that requires a paid subscription.
+ * If the user has AI access → renders children normally.
+ * Otherwise → shows a blur overlay with an upgrade prompt linking to /pricing.
  */
-export default function SubscriptionGate({ feature, children, locked = true }: SubscriptionGateProps) {
-  if (!locked) {
+export default function SubscriptionGate({ feature, children }: SubscriptionGateProps) {
+  const { hasAIAccess } = useSubscription();
+  const router = useRouter();
+
+  if (hasAIAccess) {
     return <>{children}</>;
   }
 
@@ -66,12 +71,15 @@ export default function SubscriptionGate({ feature, children, locked = true }: S
             </p>
           </div>
 
-          <button className="w-full rounded-xl bg-gradient-to-r from-purple-600 to-purple-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-purple-900/30 transition-all hover:brightness-110 active:brightness-90">
-            Upgrade to Pro
+          <button
+            onClick={() => router.push("/pricing")}
+            className="w-full rounded-xl bg-gradient-to-r from-purple-600 to-purple-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-purple-900/30 transition-all hover:brightness-110 active:brightness-90"
+          >
+            View Plans & Upgrade
           </button>
 
           <p className="mt-3 text-[10px] text-[var(--text-muted)]">
-            Cancel anytime. 7-day free trial included.
+            7-day free trial · Cancel anytime
           </p>
         </div>
       </motion.div>

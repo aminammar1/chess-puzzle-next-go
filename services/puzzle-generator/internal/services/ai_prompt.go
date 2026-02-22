@@ -5,64 +5,49 @@ import (
 	"strings"
 
 	"github.com/chess-puzzle-next/puzzle-generator/internal/models"
-	"github.com/chess-puzzle-next/puzzle-generator/pkg/openrouter"
+	"github.com/chess-puzzle-next/puzzle-generator/pkg/nvidia"
 )
 
-func buildAIPromptMessages(req models.AIPuzzleRequest) []openrouter.Message {
+// buildRAGSelectionPrompt creates the messages for the RAG puzzle-selection
+// pipeline. The AI receives a list of real candidate puzzles from the dataset
+// and must pick the one that best matches the user's intent.
+func buildRAGSelectionPrompt(req models.AIPuzzleRequest, candidates []*models.Puzzle) []nvidia.Message {
 	difficulty := req.Difficulty
 	if difficulty == "" {
 		difficulty = models.DifficultyMedium
 	}
 
-	systemPrompt := `You are a chess puzzle composer.
-Return exactly one valid JSON object and no extra text.
+	systemPrompt := `You are a chess puzzle selector. Given a user request and a numbered list of puzzles, pick the best match.
+Return ONLY: {"selected_index": N}
+No extra text.`
 
-Required JSON schema:
-{
-	"id": "ai-custom-id",
-	"fen": "<valid FEN with 6 space-separated fields>",
-	"moves": ["e2e4", "e7e5"],
-	"initialPly": 0,
-	"rating": 1600,
-	"ratingDeviation": 100,
-	"popularity": 0,
-	"nbPlays": 0,
-	"themes": ["fork", "middlegame"],
-	"gameUrl": "",
-	"difficulty": "easy|medium|hard"
-}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("User wants: %s (%s difficulty)\n\nPuzzles:\n",
+		strings.TrimSpace(req.Prompt), difficulty))
 
-Rules:
-1) Use only legal chess data.
-2) fen must be a full FEN: piece placement, side to move, castling, en passant, halfmove, fullmove.
-3) moves must be UCI moves only (e.g. e2e4, g7g8q), no SAN.
-4) Provide at least 2 moves and maximum 8 moves.
-5) themes must be concise lowercase tags.
-6) difficulty must be exactly one of easy, medium, hard.
-7) Do not use markdown fences or explanations.
-8) If unsure, still return valid JSON following the schema.`
+	for i, p := range candidates {
+		sb.WriteString(fmt.Sprintf(
+			"[%d] Rating:%d Themes:%s\n",
+			i, p.Rating, strings.Join(p.Themes, ","),
+		))
+	}
 
-	userPrompt := fmt.Sprintf(
-		"Create one %s custom chess puzzle. Intent: %s. Keep it tactical and solvable from the provided FEN by following the moves sequence.",
-		difficulty,
-		strings.TrimSpace(req.Prompt),
-	)
-
-	return []openrouter.Message{
+	return []nvidia.Message{
 		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: userPrompt},
+		{Role: "user", Content: sb.String()},
 	}
 }
 
-func buildAICorrectionMessages(req models.AIPuzzleRequest, previousOutput string, previousErr error) []openrouter.Message {
-	base := buildAIPromptMessages(req)
+// buildRAGRetryPrompt appends a correction turn when the first response
+// could not be parsed.
+func buildRAGRetryPrompt(req models.AIPuzzleRequest, candidates []*models.Puzzle, previousOutput string, previousErr error) []nvidia.Message {
+	base := buildRAGSelectionPrompt(req, candidates)
 	correction := fmt.Sprintf(
-		"Your previous output was invalid: %v. Rewrite the answer as ONE valid JSON object only. Critical: moves must be UCI format (e2e4, g7g8q), and fen must be full 6-field FEN.",
+		"Your previous output was invalid (%v). Reply with ONLY the JSON object {\"selected_index\": N} and nothing else.",
 		previousErr,
 	)
-
 	return append(base,
-		openrouter.Message{Role: "assistant", Content: strings.TrimSpace(previousOutput)},
-		openrouter.Message{Role: "user", Content: correction},
+		nvidia.Message{Role: "assistant", Content: strings.TrimSpace(previousOutput)},
+		nvidia.Message{Role: "user", Content: correction},
 	)
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/chess-puzzle-next/puzzle-generator/internal/services"
 	"github.com/chess-puzzle-next/puzzle-generator/pkg/huggingface"
 	"github.com/chess-puzzle-next/puzzle-generator/pkg/lichess"
-	"github.com/chess-puzzle-next/puzzle-generator/pkg/openrouter"
+	"github.com/chess-puzzle-next/puzzle-generator/pkg/nvidia"
 	redispkg "github.com/chess-puzzle-next/puzzle-generator/pkg/redis"
 
 	"github.com/labstack/echo/v4"
@@ -30,11 +30,11 @@ func newServer(cfg *config.Config) *echo.Echo {
 
 	svc := services.New(
 		lichess.New(lichessOpts...),
-		openrouter.New(
-			openrouter.WithBaseURL(cfg.OpenRouter.BaseURL),
-			openrouter.WithAPIKey(cfg.OpenRouter.APIKey),
-			openrouter.WithModel(cfg.OpenRouter.Model),
-			openrouter.WithTimeout(cfg.OpenRouter.Timeout),
+		nvidia.New(
+			nvidia.WithBaseURL(cfg.NVIDIA.BaseURL),
+			nvidia.WithAPIKey(cfg.NVIDIA.APIKey),
+			nvidia.WithModel(cfg.NVIDIA.Model),
+			nvidia.WithTimeout(cfg.NVIDIA.Timeout),
 		),
 		huggingface.New(
 			huggingface.WithBaseURL(cfg.HuggingFace.BaseURL),
@@ -44,7 +44,6 @@ func newServer(cfg *config.Config) *echo.Echo {
 			huggingface.WithTimeout(cfg.HuggingFace.Timeout),
 		),
 	)
-	svc.SetFallbackModels(cfg.OpenRouter.FallbackModels)
 	puzzleHandler := handlers.NewPuzzleHandler(svc)
 
 	// Redis (optional — degrades gracefully)

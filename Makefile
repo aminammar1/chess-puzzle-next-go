@@ -9,7 +9,9 @@ PY_PORT    := 8001
 
 .PHONY: help build run test vet tidy clean swagger swagger-install swagger-serve \
         docker-up docker-up-detach docker-down docker-logs \
-        voice-venv voice-install voice-run voice-dev voice-test voice-freeze voice-clean voice-docs
+        voice-venv voice-install voice-run voice-dev voice-test voice-freeze voice-clean voice-docs \
+        voice-lint voice-pytest voice-fmt voice-shell \
+        client-dev client-build client-lint dev
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*##"}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -91,3 +93,38 @@ voice-clean: ## Remove Python virtualenv
 
 voice-docs: ## Open voice service Swagger docs URL
 	@echo "http://localhost:$(PY_PORT)/docs"
+
+voice-pytest: ## Run Python tests
+	cd $(PY_SVC) && $(CURDIR)/$(PY_BIN)/python -m pytest tests/ -v
+
+voice-lint: ## Lint Python code with ruff (install if missing)
+	$(PY_BIN)/pip install -q ruff 2>/dev/null; cd $(PY_SVC) && $(CURDIR)/$(PY_BIN)/ruff check .
+
+voice-fmt: ## Format Python code with ruff
+	$(PY_BIN)/pip install -q ruff 2>/dev/null; cd $(PY_SVC) && $(CURDIR)/$(PY_BIN)/ruff format .
+
+voice-shell: ## Activate venv in a sub-shell
+	@echo "Run: source $(PY_VENV)/bin/activate"
+
+# ---------------------------------------------------------------------------
+# Client (Next.js)
+# ---------------------------------------------------------------------------
+
+client-dev: ## Start Next.js dev server
+	cd client && npm run dev
+
+client-build: ## Build Next.js for production
+	cd client && npm run build
+
+client-lint: ## Lint Next.js project
+	cd client && npm run lint
+
+# ---------------------------------------------------------------------------
+# Run everything
+# ---------------------------------------------------------------------------
+
+dev: ## Start Go + Python + Client in parallel
+	@echo "Starting all services..."
+	@$(MAKE) run &
+	@$(MAKE) voice-dev &
+	@$(MAKE) client-dev

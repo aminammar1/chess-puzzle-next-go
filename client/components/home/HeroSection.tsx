@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import Button from "@/components/ui/Button";
+import Chip from "@/components/ui/Chip";
 import Quote from "@/components/ui/Quote";
 import AnimatedBoard from "@/components/home/AnimatedBoard";
 
@@ -27,10 +28,14 @@ export default function HeroSection() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6 }}
             >
-              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-4 py-1.5 text-xs font-medium text-[var(--text-secondary)]">
-                <span className="inline-block h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+              <Chip
+                variant="bordered"
+                size="sm"
+                startContent={<span className="inline-block h-2 w-2 rounded-full bg-green-500 animate-pulse" />}
+                className="mb-4 border-white/[0.08] bg-white/[0.03] text-xs font-medium text-[var(--text-secondary)]"
+              >
                 New: AI-generated puzzles now available
-              </div>
+              </Chip>
             </motion.div>
 
             <motion.h1
@@ -66,10 +71,10 @@ export default function HeroSection() {
               transition={{ duration: 0.6, delay: 0.3 }}
               className="flex flex-wrap items-center justify-center gap-3 lg:justify-start"
             >
-              <Button onClick={() => router.push("/puzzles")} variant="gold" size="lg">
+              <Button variant="gold" size="lg" onClick={() => router.push("/puzzles")}>
                 ♔ Start Solving
               </Button>
-              <Button onClick={() => router.push("/daily")} variant="primary" size="lg">
+              <Button variant="primary" size="lg" onClick={() => router.push("/daily")}>
                 📅 Daily Challenge
               </Button>
             </motion.div>

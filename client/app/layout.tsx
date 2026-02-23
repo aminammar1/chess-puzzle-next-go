@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/lib/theme";
 import { SubscriptionProvider } from "@/lib/subscription";
+import { TooltipProvider } from "@/components/ui/Tooltip";
 
 export const metadata: Metadata = {
   title: "Chess Puzzles — Master the Art of Tactics",
@@ -14,7 +15,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className="dark">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
@@ -24,9 +25,11 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-screen antialiased">
-        <ThemeProvider>
-          <SubscriptionProvider>{children}</SubscriptionProvider>
-        </ThemeProvider>
+        <TooltipProvider>
+          <ThemeProvider>
+            <SubscriptionProvider>{children}</SubscriptionProvider>
+          </ThemeProvider>
+        </TooltipProvider>
       </body>
     </html>
   );

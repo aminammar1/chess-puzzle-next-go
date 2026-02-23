@@ -346,3 +346,64 @@ body {
   box-shadow: inset 0 0 0 3px rgba(230, 145, 46, 0.7);
   background-color: rgba(230, 145, 46, 0.2) !important;
 }
+
+/* ──────────────────────────────────────────────
+   Navbar glass
+   ────────────────────────────────────────────── */
+.nav-glass {
+  background: rgba(26, 15, 8, 0.82);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+.nav-item {
+  position: relative;
+  z-index: 1;
+}
+
+/* ──────────────────────────────────────────────
+   Board control buttons (< > undo reset)
+   ────────────────────────────────────────────── */
+.board-ctrl-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.board-ctrl-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.board-ctrl-btn:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  transform: scale(0.95);
+}
+
+.board-ctrl-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+/* ──────────────────────────────────────────────
+   Scrollbar thin variant
+   ────────────────────────────────────────────── */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+}

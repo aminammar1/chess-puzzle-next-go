@@ -1,6 +1,6 @@
 /**
  * Chess board sound effects using the Web Audio API.
- * No external files needed — all sounds are synthesised.
+ * Woody / realistic piece sounds — no external files needed.
  */
 
 let audioCtx: AudioContext | null = null;
@@ -45,7 +45,7 @@ function playTone(
   }
 }
 
-function playNoise(duration: number, volume = 0.06) {
+function playNoise(duration: number, volume = 0.06, hpFreq = 800) {
   try {
     const ctx = getAudioContext();
     const bufferSize = ctx.sampleRate * duration;
@@ -63,7 +63,7 @@ function playNoise(duration: number, volume = 0.06) {
 
     const filter = ctx.createBiquadFilter();
     filter.type = "highpass";
-    filter.frequency.setValueAtTime(800, ctx.currentTime);
+    filter.frequency.setValueAtTime(hpFreq, ctx.currentTime);
 
     source.connect(filter);
     filter.connect(gain);
@@ -74,19 +74,80 @@ function playNoise(duration: number, volume = 0.06) {
   }
 }
 
-/* ── Public sound effects ──────────────────────────────────── */
+/**
+ * Simulate a woody "thunk" — a short low-mid resonant tap heard when
+ * a wooden piece is set onto a wooden board surface.
+ */
+function playWoodyThunk(pitch = 320, vol = 0.18) {
+  try {
+    const ctx = getAudioContext();
+    const t = ctx.currentTime;
 
-/** Regular piece move — soft "click" */
-export function playMoveSound() {
-  playTone(600, 0.08, "sine", 0.12);
-  playNoise(0.05, 0.04);
+    // Main body — band-passed noise burst (wood resonance)
+    const noiseLen = 0.06;
+    const buf = ctx.createBuffer(1, ctx.sampleRate * noiseLen, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1);
+    const noise = ctx.createBufferSource();
+    noise.buffer = buf;
+
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.setValueAtTime(pitch, t);
+    bp.Q.setValueAtTime(3, t);
+
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(vol * 0.7, t);
+    ng.gain.exponentialRampToValueAtTime(0.001, t + noiseLen);
+
+    noise.connect(bp).connect(ng).connect(ctx.destination);
+    noise.start(t);
+
+    // Attack transient — very short high click
+    const clickBuf = ctx.createBuffer(1, ctx.sampleRate * 0.008, ctx.sampleRate);
+    const cd = clickBuf.getChannelData(0);
+    for (let i = 0; i < cd.length; i++) cd[i] = (Math.random() * 2 - 1);
+    const click = ctx.createBufferSource();
+    click.buffer = clickBuf;
+
+    const chp = ctx.createBiquadFilter();
+    chp.type = "highpass";
+    chp.frequency.setValueAtTime(2000, t);
+
+    const cg = ctx.createGain();
+    cg.gain.setValueAtTime(vol * 0.5, t);
+    cg.gain.exponentialRampToValueAtTime(0.001, t + 0.008);
+
+    click.connect(chp).connect(cg).connect(ctx.destination);
+    click.start(t);
+
+    // Low resonant thud (the board vibrating)
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(pitch * 0.6, t);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(vol * 0.35, t);
+    og.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+    osc.connect(og).connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.07);
+  } catch {
+    // Silently ignore
+  }
 }
 
-/** Piece capture — sharper click + low thud */
+/* ── Public sound effects ──────────────────────────────────── */
+
+/** Regular piece move — woody "place" sound */
+export function playMoveSound() {
+  playWoodyThunk(340, 0.16);
+}
+
+/** Piece capture — heavier thud + a little slide noise */
 export function playCaptureSound() {
-  playTone(300, 0.12, "triangle", 0.18);
-  playNoise(0.08, 0.08);
-  setTimeout(() => playTone(180, 0.1, "sine", 0.1), 30);
+  playWoodyThunk(260, 0.24);
+  playNoise(0.04, 0.06, 1200);        // scrape of captured piece
+  setTimeout(() => playWoodyThunk(400, 0.1), 40);  // second tap
 }
 
 /** Check — rising double beep */

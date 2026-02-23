@@ -148,7 +148,116 @@ Key packages:
 - `internal/middleware` — Request logging, premium access control
 
 ### voice-to-move
-**Python · FastAPI** — Spoken moves → legal chess moves with AI (work in progress)
+**Python · FastAPI** — Spoken moves → legal chess moves with AI
+
+---
+
+## Voice-to-Move — How It Works
+
+The voice system lets you play chess by speaking: say **"knight to f3"** and the piece moves. It supports two speech-to-text paths and a custom NLP parser that converts natural language into SAN/UCI notation.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Browser (Next.js)                        │
+│                                                              │
+│   Path A: Browser STT                Path B: Server STT      │
+│   ┌──────────────────────┐          ┌──────────────────────┐ │
+│   │ webkitSpeechRecognition│         │ MediaRecorder API    │ │
+│   │ (Chrome/Edge, needs   │         │ (records WebM audio) │ │
+│   │  internet + HTTPS)    │         │                      │ │
+│   └──────────┬───────────┘         └──────────┬───────────┘ │
+│              │ text                            │ audio blob   │
+│              ▼                                 ▼              │
+│   POST /voice/parse              POST /voice/move            │
+│   { "text": "knight f3" }        FormData: audio file        │
+└──────────────┬──────────────────────────────┬────────────────┘
+               │                              │
+               ▼                              ▼
+┌──────────────────────────────────────────────────────────────┐
+│              Voice-to-Move Service (FastAPI)                  │
+│                                                              │
+│  /voice/parse  ──→  move_parser.parse_transcript(text)       │
+│                                                              │
+│  /voice/move   ──→  pydub (convert to WAV)                   │
+│                 ──→  Google Speech Recognition (STT)          │
+│                 ──→  move_parser.parse_transcript(text)       │
+│                                                              │
+│  /voice/ws     ──→  WebSocket real-time push-to-talk         │
+│                     (binary audio frames → JSON move result)  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Two STT Paths
+
+| Path | When Used | How |
+|------|-----------|-----|
+| **Browser STT** (Path A) | Default on Chrome/Edge with internet | Uses `webkitSpeechRecognition` API for real-time transcription, sends final text to `/voice/parse` for move parsing |
+| **Server STT** (Path B) | Fallback when browser STT fails (no HTTPS, Firefox, offline) | Records audio via `MediaRecorder` API, uploads WebM blob to `/voice/move`, server transcribes with Google Speech API |
+
+The client auto-detects: it first tries browser STT, and if a `network` or `service-not-allowed` error occurs, it permanently switches to server-side for that session.
+
+### Move Parser
+
+The core NLP engine (`move_parser.py`, ~360 lines) converts free-form English into chess notation using a **two-pass regex pipeline**:
+
+**Pass 1 — Normalization:**
+- Number words → digits: "four" → "4"
+- Piece synonyms: "horse" → "knight"
+- File names: NATO phonetic ("alpha" → "a"), common mis-hearings ("see" → "c")
+- Capture synonyms: "captures", "takes", "by" → "takes"
+- Castling variants: "castle king side", "short castle", "kingside castle" → "O-O"
+
+**Pass 2 — Pattern matching** (most specific → least specific):
+1. `{square} to {square}` → UCI (e.g. "e2 to e4" → `e2e4`)
+2. `{piece} {square} to {square}` → UCI + SAN (e.g. "rook a1 to a8" → `a1a8` / `Ra8`)
+3. `{piece} takes {square}` → SAN capture (e.g. "bishop takes d5" → `Bxd5`)
+4. `{file} takes {square}` → pawn capture (e.g. "a takes b4" → `axb4`)
+5. `{piece} {square}` → SAN (e.g. "knight f3" → `Nf3`)
+6. `{square}` alone → pawn move (e.g. "e4" → `e4`)
+7. Castling: "castle king/queen side" → `O-O` / `O-O-O`
+8. Promotion: "promote to queen" → appends `=Q`
+
+### Supported Voice Commands
+
+| Spoken Phrase | Parsed SAN | Parsed UCI |
+|---------------|-----------|-----------|
+| "e2 to e4" | e4 | e2e4 |
+| "knight to f3" | Nf3 | — |
+| "bishop takes d5" | Bxd5 | — |
+| "castle king side" | O-O | e1g1 |
+| "queen h5 check" | Qh5+ | — |
+| "pawn to e4" | e4 | — |
+| "rook a1 to a8" | Ra8 | a1a8 |
+| "a takes b4" | axb4 | — |
+| "promote to queen" | =Q | — |
+
+### Listening Modes
+
+| Mode | Behavior |
+|------|----------|
+| **Push-to-talk** | Tap mic → speak → result. One move at a time. |
+| **Auto / Continuous** | Toggle auto mode on. Service listens continuously, auto-restarts after each move (900ms on success, 1500ms on error). |
+
+### API Endpoints
+
+| Method | Endpoint | Input | Output |
+|--------|----------|-------|--------|
+| `POST` | `/api/v1/voice/transcribe` | Audio file (multipart) | `{ raw_transcript, confidence }` |
+| `POST` | `/api/v1/voice/move` | Audio file (multipart) | `{ raw_transcript, san, uci, promotion, confidence }` |
+| `POST` | `/api/v1/voice/parse` | `{ text }` (JSON) | `{ raw_transcript, san, uci, promotion, confidence }` |
+| `WS`   | `/api/v1/voice/ws` | Binary audio frames | JSON move result per turn |
+
+### Tech Stack
+
+| Component | Technology |
+|-----------|-----------|
+| Framework | FastAPI 0.115 · Python 3.14 |
+| Speech-to-Text | Google Speech Recognition (via `SpeechRecognition` library) |
+| Audio Conversion | pydub + ffmpeg (any format → 16kHz mono WAV) |
+| Move Parser | Custom regex NLP pipeline (~360 lines) |
+| Supported Formats | WAV, OGG, MP3, WEBM, FLAC, MP4 |
 
 ---
 
@@ -217,4 +326,4 @@ Swagger UI is available at `http://localhost:8080/swagger/index.html` when the s
 | Data | HuggingFace Datasets Server, Lichess API |
 | Cache | Redis 8 (Alpine) with AOF persistence |
 | Infra | Docker Compose, multi-stage Go builds |
-| Voice | Python, FastAPI (WIP) |
+| Voice | Python 3.14, FastAPI, SpeechRecognition, pydub, Custom regex NLP |

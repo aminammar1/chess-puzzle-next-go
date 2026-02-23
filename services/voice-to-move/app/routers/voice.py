@@ -1,20 +1,24 @@
 """
 Voice router
 =============
-Accepts an audio file upload, transcribes it using the SpeechRecognition
-library (Google free tier), and returns the raw transcript text.
+Accepts an audio file upload (push-to-talk) or a WebSocket audio stream,
+transcribes speech using SpeechRecognition (Google free tier), parses the
+transcript into a chess move (SAN / UCI), and returns the result.
 
-Supported formats: WAV, OGG, MP3, WEBM, FLAC (converted via pydub/ffmpeg).
+Supported audio formats: WAV, OGG, MP3, WEBM, FLAC (converted via pydub/ffmpeg).
 """
 
 import io
+import json
 import tempfile
 import logging
 
 import speech_recognition as sr
 from pydub import AudioSegment
-from fastapi import APIRouter, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel
+
+from app.parser.move_parser import parse_transcript, ParsedMove
 
 logger = logging.getLogger(__name__)
 
@@ -46,23 +50,30 @@ class TranscriptResponse(BaseModel):
 
 
 class MoveResponse(BaseModel):
-    """Parsed chess move returned to the client (future use)."""
+    """Parsed chess move returned to the client."""
 
     raw_transcript: str
-    uci: str | None = None  # e.g. "e2e4"
-    san: str | None = None  # e.g. "e4"
+    san: str | None = None   # e.g. "Nf3", "e4", "O-O"
+    uci: str | None = None   # e.g. "e2e4", "e1g1"
+    promotion: str | None = None  # "q", "r", "b", "n"
     confidence: float | None = None  # 0.0 – 1.0
 
 
+class ParseTextRequest(BaseModel):
+    """Plain text to parse into a chess move (no audio)."""
+
+    text: str
+
+
 # ---------------------------------------------------------------------------
-# Helpers
+# Audio helpers
 # ---------------------------------------------------------------------------
 
 
 def _audio_to_wav_bytes(audio_bytes: bytes, source_format: str) -> bytes:
     """Convert any supported audio format to WAV PCM bytes in memory."""
     segment = AudioSegment.from_file(io.BytesIO(audio_bytes), format=source_format)
-    # Ensure 16-bit mono 16 kHz – optimal for speech recognition
+    # 16-bit mono 16 kHz – optimal for speech recognition
     segment = segment.set_frame_rate(16000).set_channels(1).set_sample_width(2)
     buf = io.BytesIO()
     segment.export(buf, format="wav")
@@ -73,18 +84,34 @@ def _detect_format(content_type: str | None, filename: str | None) -> str:
     """Resolve the audio format from MIME type or file extension."""
     if content_type and content_type in _MIME_TO_FORMAT:
         return _MIME_TO_FORMAT[content_type]
-
     if filename:
         ext = filename.rsplit(".", 1)[-1].lower()
         if ext in ("wav", "ogg", "mp3", "flac", "webm", "mp4"):
             return ext
-
-    # Default fallback – let pydub/ffmpeg guess
     return "wav"
 
 
+def _transcribe_wav(wav_bytes: bytes) -> tuple[str, float | None]:
+    """Run Google Speech Recognition on raw WAV bytes. Returns (transcript, confidence)."""
+    recognizer = sr.Recognizer()
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
+        tmp.write(wav_bytes)
+        tmp.flush()
+        with sr.AudioFile(tmp.name) as source:
+            audio_data = recognizer.record(source)
+
+    result = recognizer.recognize_google(audio_data, language="en-US", show_all=True)
+    if not result:
+        return "", None
+
+    best = result["alternative"][0]
+    transcript = best.get("transcript", "")
+    confidence = best.get("confidence", None)
+    return transcript, confidence
+
+
 # ---------------------------------------------------------------------------
-# Endpoints
+# REST Endpoints
 # ---------------------------------------------------------------------------
 
 
@@ -93,115 +120,172 @@ def _detect_format(content_type: str | None, filename: str | None) -> str:
     response_model=TranscriptResponse,
     status_code=status.HTTP_200_OK,
     summary="Transcribe an audio file to text",
-    description=(
-        "Upload a WAV, OGG, MP3, WEBM or FLAC audio clip. "
-        "The service will transcribe the audio using Google Speech Recognition "
-        "and return the raw text."
-    ),
 )
 async def transcribe_audio(
     audio: UploadFile = File(..., description="Audio file (WAV, OGG, MP3, WEBM, FLAC)"),
 ) -> TranscriptResponse:
-    """
-    1. Read the uploaded audio file.
-    2. Convert to WAV PCM if needed (via pydub + ffmpeg).
-    3. Transcribe using Google Speech Recognition (free tier).
-    4. Return the raw transcript and confidence score.
-    """
-    # --- Read upload ---
+    """Upload an audio clip → get the raw transcript."""
     audio_bytes = await audio.read()
-    if len(audio_bytes) == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Uploaded audio file is empty.",
-        )
+    if not audio_bytes:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Uploaded audio file is empty.")
 
-    logger.info(
-        "Received audio: filename=%s  content_type=%s  size=%d bytes",
-        audio.filename,
-        audio.content_type,
-        len(audio_bytes),
-    )
+    logger.info("Received audio: filename=%s  type=%s  size=%d",
+                audio.filename, audio.content_type, len(audio_bytes))
 
-    # --- Convert to WAV ---
     fmt = _detect_format(audio.content_type, audio.filename)
     try:
         wav_bytes = _audio_to_wav_bytes(audio_bytes, fmt)
     except Exception as exc:
         logger.error("Audio conversion failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Could not decode audio file. Ensure it is a valid {fmt.upper()} file.",
-        )
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            f"Could not decode audio. Ensure it is a valid {fmt.upper()} file.")
 
-    # --- Transcribe ---
-    recognizer = sr.Recognizer()
     try:
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
-            tmp.write(wav_bytes)
-            tmp.flush()
-            with sr.AudioFile(tmp.name) as source:
-                audio_data = recognizer.record(source)
-
-        # Use Google free STT – returns best transcript
-        result = recognizer.recognize_google(
-            audio_data, language="en-US", show_all=True
-        )
-
-        if not result:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Speech recognition returned no results. Try speaking more clearly.",
-            )
-
-        # result is a dict with "alternative" list when show_all=True
-        best = result["alternative"][0]
-        transcript = best.get("transcript", "")
-        confidence = best.get("confidence", None)
-
+        transcript, confidence = _transcribe_wav(wav_bytes)
+        if not transcript:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "No speech detected. Try speaking more clearly.")
         logger.info("Transcript: %r (confidence=%.3f)", transcript, confidence or 0.0)
-
         return TranscriptResponse(
             raw_transcript=transcript,
             confidence=round(confidence, 4) if confidence else None,
         )
-
     except sr.UnknownValueError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Could not understand the audio. Please speak clearly and try again.",
-        )
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Could not understand the audio.")
     except sr.RequestError as exc:
         logger.error("Google Speech API error: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Speech recognition service unavailable: {exc}",
-        )
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                            f"Speech recognition service unavailable: {exc}")
 
 
 @router.post(
     "/voice/move",
     response_model=MoveResponse,
     status_code=status.HTTP_200_OK,
-    summary="Convert a voice recording to a chess move",
-    description=(
-        "Upload a WAV/OGG audio clip containing a spoken chess move. "
-        "The service will transcribe the audio and return the corresponding "
-        "UCI and SAN notation. (Move parsing coming in a future milestone.)"
-    ),
+    summary="Transcribe audio and parse chess move (push-to-talk)",
 )
 async def voice_to_move(
-    audio: UploadFile = File(..., description="Audio file (WAV or OGG)"),
+    audio: UploadFile = File(..., description="Audio file (WAV, OGG, MP3, WEBM, FLAC)"),
 ) -> MoveResponse:
-    """
-    Transcribes the audio and returns raw transcript.
-    Move parsing (UCI/SAN) will be added in a future iteration.
-    """
+    """Upload an audio clip → get the parsed chess move (SAN + UCI)."""
     result = await transcribe_audio(audio)
+    parsed = parse_transcript(result.raw_transcript)
+
     return MoveResponse(
         raw_transcript=result.raw_transcript,
+        san=parsed.san,
+        uci=parsed.uci,
+        promotion=parsed.promotion,
         confidence=result.confidence,
-        # UCI/SAN parsing will be implemented next
-        uci=None,
-        san=None,
     )
+
+
+@router.post(
+    "/voice/parse",
+    response_model=MoveResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Parse plain text into a chess move (no audio)",
+)
+async def parse_text(body: ParseTextRequest) -> MoveResponse:
+    """
+    Send raw text (e.g. from the browser's own SpeechRecognition)
+    and get back the parsed chess move.
+    """
+    parsed = parse_transcript(body.text)
+    return MoveResponse(
+        raw_transcript=body.text,
+        san=parsed.san,
+        uci=parsed.uci,
+        promotion=parsed.promotion,
+        confidence=parsed.confidence,
+    )
+
+
+# ---------------------------------------------------------------------------
+# WebSocket – real-time push-to-talk
+# ---------------------------------------------------------------------------
+
+
+@router.websocket("/voice/ws")
+async def voice_ws(ws: WebSocket):
+    """
+    Real-time voice-to-move over WebSocket.
+
+    Protocol
+    --------
+    1. Client connects to  ws://.../api/v1/voice/ws
+    2. Client sends a JSON config message (optional):
+       {"format": "webm", "sampleRate": 16000}
+    3. Client sends raw audio bytes (binary frames) while user is speaking.
+    4. Client sends a JSON text frame: {"action": "end"}  when user stops.
+    5. Server responds with a JSON frame containing the parsed move:
+       {"raw_transcript": "...", "san": "Nf3", "uci": null, "confidence": 0.92}
+    6. Loop back to step 3 for the next move, or close the connection.
+    """
+    await ws.accept()
+    logger.info("WebSocket client connected")
+
+    audio_format = "webm"  # default; browser MediaRecorder usually sends webm
+
+    try:
+        while True:
+            audio_chunks: list[bytes] = []
+
+            # --- Receive audio frames until "end" signal ---
+            while True:
+                message = await ws.receive()
+
+                if message.get("type") == "websocket.disconnect":
+                    return
+
+                # Text frame – could be config or end signal
+                if "text" in message:
+                    data = json.loads(message["text"])
+                    if data.get("action") == "end":
+                        break
+                    # Config message
+                    if "format" in data:
+                        audio_format = data["format"]
+                        logger.info("WS audio format set to: %s", audio_format)
+                    continue
+
+                # Binary frame – audio data
+                if "bytes" in message:
+                    audio_chunks.append(message["bytes"])
+
+            if not audio_chunks:
+                await ws.send_json({"error": "No audio data received."})
+                continue
+
+            raw_audio = b"".join(audio_chunks)
+            logger.info("WS received %d bytes of %s audio", len(raw_audio), audio_format)
+
+            # Convert & transcribe
+            try:
+                wav_bytes = _audio_to_wav_bytes(raw_audio, audio_format)
+                transcript, confidence = _transcribe_wav(wav_bytes)
+            except Exception as exc:
+                logger.error("WS transcription error: %s", exc)
+                await ws.send_json({"error": f"Transcription failed: {exc}"})
+                continue
+
+            if not transcript:
+                await ws.send_json({"error": "No speech detected."})
+                continue
+
+            # Parse move
+            parsed = parse_transcript(transcript)
+            await ws.send_json({
+                "raw_transcript": transcript,
+                "san": parsed.san,
+                "uci": parsed.uci,
+                "promotion": parsed.promotion,
+                "confidence": round(confidence, 4) if confidence else None,
+            })
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected")
+    except Exception as exc:
+        logger.error("WebSocket error: %s", exc)
+        await ws.close(code=1011, reason=str(exc))

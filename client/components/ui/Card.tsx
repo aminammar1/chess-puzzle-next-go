@@ -14,8 +14,11 @@ export default function Card({ children, className, hover, onClick }: CardProps)
   return (
     <div
       onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => { if (e.key === "Enter" || e.key === " ") onClick(); } : undefined}
       className={cn(
-        "rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-5 shadow-lg shadow-black/10",
+        "rounded-xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm shadow-lg shadow-black/10",
         hover &&
         "cursor-pointer transition-all duration-300 hover:border-white/[0.12] hover:shadow-xl hover:-translate-y-0.5",
         onClick && "cursor-pointer",
@@ -33,6 +36,14 @@ export function CardHeader({ children, className }: { children: ReactNode; class
       {children}
     </div>
   );
+}
+
+export function CardBody({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn("p-5", className)}>{children}</div>;
+}
+
+export function CardFooter({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn("px-5 pb-4 pt-0", className)}>{children}</div>;
 }
 
 export function CardTitle({ children, className }: { children: ReactNode; className?: string }) {

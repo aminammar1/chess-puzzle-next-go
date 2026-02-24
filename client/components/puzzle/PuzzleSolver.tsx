@@ -62,7 +62,15 @@ export default function PuzzleSolver({ source, onNextPuzzle, onBack, isDaily, on
   const movesLeft = playerMovesLeft();
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4 lg:gap-6 w-full max-w-[1100px] mx-auto animate-fadeIn px-2 sm:px-0">
+    <div className="flex flex-col lg:flex-row gap-4 lg:gap-6 w-full max-w-[1100px] mx-auto animate-fadeIn px-2 sm:px-0" role="main" aria-label="Chess puzzle solver">
+      {/* Screen reader announcement for puzzle state */}
+      <div className="sr-only" aria-live="assertive" aria-atomic="true">
+        {solved && "Puzzle solved! Congratulations."}
+        {failed && "Wrong move. The puzzle will reset."}
+        {waitingForOpponent && "Opponent is moving. Please wait."}
+        {!solved && !failed && !waitingForOpponent && puzzle && `Your turn as ${turnColor}. ${movesLeft} moves remaining.`}
+      </div>
+
       {/* ─── Left: Board column ──────────────────────── */}
       <div className="flex-1 min-w-0 flex flex-col gap-3">
         {/* Status banner */}
@@ -162,30 +170,30 @@ export default function PuzzleSolver({ source, onNextPuzzle, onBack, isDaily, on
           <ChessBoard />
         </div>
 
-        {/* Voice + Nav bar (below board on all sizes) */}
-        <div className="flex items-center gap-2 w-full max-w-[min(100%,560px)] mx-auto">
-          <VoiceButton />
-          {(solved || failed) && (
-            <div className="flex items-center gap-1 text-[10px] text-[var(--text-muted)] shrink-0">
-              <button
-                onClick={() => navigateHistory("back")}
-                className="rounded px-1.5 py-1 hover:bg-white/[0.04] hover:text-[var(--text-secondary)] transition-colors"
-              >
-                ◀
-              </button>
-              <button
-                onClick={() => navigateHistory("forward")}
-                className="rounded px-1.5 py-1 hover:bg-white/[0.04] hover:text-[var(--text-secondary)] transition-colors"
-              >
-                ▶
-              </button>
-            </div>
-          )}
-        </div>
+        {/* Nav bar (below board) */}
+        {(solved || failed) && (
+          <div className="flex items-center justify-center gap-1 w-full max-w-[min(100%,560px)] mx-auto text-[10px] text-[var(--text-muted)]">
+            <button
+              onClick={() => navigateHistory("back")}
+              className="rounded px-1.5 py-1 hover:bg-white/[0.04] hover:text-[var(--text-secondary)] transition-colors"
+            >
+              ◀
+            </button>
+            <button
+              onClick={() => navigateHistory("forward")}
+              className="rounded px-1.5 py-1 hover:bg-white/[0.04] hover:text-[var(--text-secondary)] transition-colors"
+            >
+              ▶
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ─── Right: Sidebar ──────────────────────────── */}
       <div className="w-full lg:w-[300px] xl:w-[320px] shrink-0 flex flex-col gap-3">
+        {/* Voice control panel (same UX as Voice Lab) */}
+        <VoiceButton variant="full" autoListen />
+
         {/* Puzzle info */}
         <div className="rounded-xl border border-white/[0.08] bg-black/40 backdrop-blur-md p-4 shadow-inner">
           <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/[0.06]">

@@ -69,7 +69,7 @@ interface PuzzleState {
   resetPuzzle: () => void;
   setVoiceListening: (listening: boolean) => void;
   setVoiceTranscript: (transcript: string) => void;
-  processVoiceMove: (transcript: string) => boolean;
+  processVoiceMove: (transcript: string, from?: string, to?: string, promotion?: string) => boolean;
   navigateHistory: (direction: "back" | "forward") => void;
 }
 
@@ -447,10 +447,126 @@ export const usePuzzleStore = create<PuzzleState>((set, get) => ({
   setVoiceListening: (listening) => set({ voiceListening: listening }),
   setVoiceTranscript: (transcript) => set({ voiceTranscript: transcript }),
 
-  processVoiceMove: (transcript: string) => {
-    const cleaned = transcript.toLowerCase().trim();
-    const match = cleaned.match(/([a-h][1-8])\s*(?:to\s*)?([a-h][1-8])/);
-    if (match) return get().makeMove(match[1], match[2]);
+  processVoiceMove: (transcript: string, from?: string, to?: string, promotion?: string) => {
+    // If explicit from/to provided (from voice service parsing), use them directly
+    if (from && to) {
+      return get().makeMove(from, to, promotion);
+    }
+
+    // ── Local fallback — parse common spoken patterns using chess.js ──
+    const { game } = get();
+    if (!game) return false;
+
+    const raw = transcript.toLowerCase().trim();
+
+    // Remove filler words
+    const cleaned = raw
+      .replace(/\b(um|uh|like|please|move|play|the|my|go|put)\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    // Piece word → SAN letter
+    const pieceMap: Record<string, string> = {
+      king: "K", knight: "N", horse: "N", night: "N", nite: "N",
+      bishop: "B", rook: "R", tower: "R", castle: "R", queen: "Q",
+    };
+
+    // File word → letter
+    const fileMap: Record<string, string> = {
+      alpha: "a", a: "a", eh: "a",
+      bravo: "b", b: "b", bee: "b",
+      charlie: "c", c: "c", see: "c", sea: "c",
+      delta: "d", d: "d", dee: "d",
+      echo: "e", e: "e",
+      foxtrot: "f", f: "f", ef: "f",
+      golf: "g", g: "g", gee: "g",
+      hotel: "h", h: "h",
+    };
+
+    // Number word → digit
+    const numMap: Record<string, string> = {
+      one: "1", two: "2", three: "3", four: "4",
+      five: "5", six: "6", seven: "7", eight: "8",
+      won: "1", to: "2", too: "2", tree: "3", for: "4",
+      ate: "8",
+    };
+
+    // Normalize file/number words into square notation
+    const normalize = (s: string): string => {
+      let r = s;
+      for (const [word, letter] of Object.entries(fileMap)) {
+        r = r.replace(new RegExp(`\\b${word}\\b`, "g"), letter);
+      }
+      for (const [word, digit] of Object.entries(numMap)) {
+        r = r.replace(new RegExp(`\\b${word}\\b`, "g"), digit);
+      }
+      return r.replace(/\s+/g, " ").trim();
+    };
+
+    const norm = normalize(cleaned);
+
+    // Get all legal moves in verbose format
+    const legalMoves = game.moves({ verbose: true });
+
+    // 1) Castling
+    if (/castle\s*(king|short)|short\s*castle|king\s*side\s*castle|o-o(?!-o)/i.test(norm)) {
+      const castleMove = legalMoves.find((m) => m.san === "O-O");
+      if (castleMove) return get().makeMove(castleMove.from, castleMove.to);
+    }
+    if (/castle\s*(queen|long)|long\s*castle|queen\s*side\s*castle|o-o-o/i.test(norm)) {
+      const castleMove = legalMoves.find((m) => m.san === "O-O-O");
+      if (castleMove) return get().makeMove(castleMove.from, castleMove.to);
+    }
+
+    // 2) Square to square: "e2 to e4", "e2 e4"
+    const sqToSq = norm.match(/([a-h][1-8])\s*(?:to)?\s*([a-h][1-8])/);
+    if (sqToSq) {
+      const [, f, t] = sqToSq;
+      const legal = legalMoves.find((m) => m.from === f && m.to === t);
+      if (legal) return get().makeMove(f, t);
+    }
+
+    // 3) Piece to square: "knight f3", "bishop to d5", "rook takes a8"
+    for (const [word, san] of Object.entries(pieceMap)) {
+      const pattern = new RegExp(
+        `\\b${word}\\s+(?:to\\s+|takes?\\s+|captures?\\s+)?([a-h][1-8])`,
+        "i",
+      );
+      const m = norm.match(pattern);
+      if (m) {
+        const target = m[1];
+        const candidates = legalMoves.filter(
+          (mv) => mv.piece.toUpperCase() === san.toLowerCase() && mv.to === target,
+        );
+        // chess.js uses lowercase piece letters
+        const cands = legalMoves.filter(
+          (mv) => mv.piece === san.toLowerCase() && mv.to === target,
+        );
+        const found = cands[0] || candidates[0];
+        if (found) return get().makeMove(found.from, found.to);
+      }
+    }
+
+    // 4) Pawn capture: "a takes b4", "e takes d5"
+    const pawnCap = norm.match(/([a-h])\s*(?:takes?|captures?|x)\s*([a-h][1-8])/);
+    if (pawnCap) {
+      const [, file, target] = pawnCap;
+      const found = legalMoves.find(
+        (m) => m.piece === "p" && m.from[0] === file && m.to === target,
+      );
+      if (found) return get().makeMove(found.from, found.to);
+    }
+
+    // 5) Single square (pawn push): "e4"
+    const singleSq = norm.match(/\b([a-h][1-8])\b/);
+    if (singleSq) {
+      const target = singleSq[1];
+      const found = legalMoves.find(
+        (m) => m.piece === "p" && m.to === target && !m.captured,
+      );
+      if (found) return get().makeMove(found.from, found.to);
+    }
+
     return false;
   },
 

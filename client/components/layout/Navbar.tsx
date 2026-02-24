@@ -7,17 +7,18 @@ import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useTheme, type ThemeMode } from "@/lib/theme";
 
+/* ───────── Config ───────── */
 const navItems = [
   { href: "/", label: "Home", icon: "♚" },
   { href: "/puzzles", label: "Puzzles", icon: "♞" },
   { href: "/daily", label: "Daily", icon: "♜" },
-  { href: "/voice-test", label: "Voice", icon: "🎤" },
+  { href: "/voice-test", label: "Voice Lab", icon: "🎤" },
   { href: "/pricing", label: "Pro", icon: "♛" },
 ];
 
 const themeOptions: { mode: ThemeMode; label: string; icon: string }[] = [
-  { mode: "wood", label: "Classic", icon: "🪵" },
-  { mode: "dark", label: "Steel", icon: "🌑" },
+  { mode: "wood", label: "Classic Wood", icon: "🪵" },
+  { mode: "dark", label: "Dark Steel", icon: "🌑" },
   { mode: "midnight", label: "Midnight", icon: "🌙" },
   { mode: "emerald", label: "Emerald", icon: "💎" },
 ];
@@ -29,39 +30,42 @@ export default function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  function isActive(href: string) {
-    if (href === "/") return pathname === "/";
-    return pathname.startsWith(href);
-  }
+  const isActive = (href: string) =>
+    href === "/" ? pathname === "/" : pathname.startsWith(href);
 
+  /* Close popovers on outside click */
   useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node))
         setShowThemeMenu(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Close mobile menu on route change
-  useEffect(() => { setMobileOpen(false); }, [pathname]);
+  /* Close mobile menu on route change */
+  useEffect(() => setMobileOpen(false), [pathname]);
 
   return (
     <nav className="sticky top-0 z-50 nav-glass">
-      <div className="mx-auto flex h-[56px] max-w-7xl items-center justify-between px-5 lg:px-8">
+      {/* Accent line at top — uses theme accent */}
+      <div
+        className="h-[2px] w-full transition-colors duration-300"
+        style={{ background: `linear-gradient(90deg, transparent, var(--accent-gold), transparent)` }}
+      />
+
+      <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 lg:px-8">
         {/* ─── Logo ─── */}
         <Link href="/" className="group flex items-center gap-2.5">
-          <div className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-[var(--accent-gold)] to-amber-700 text-sm shadow-md shadow-[var(--accent-gold)]/15 transition-all duration-300 group-hover:shadow-lg group-hover:shadow-[var(--accent-gold)]/25 group-hover:scale-105">
-            ♔
-            <div className="absolute inset-0 rounded-lg bg-white/10 opacity-0 transition-opacity group-hover:opacity-100" />
+          <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-[var(--accent-gold)] to-amber-700 text-sm shadow-md shadow-[var(--accent-gold)]/20 transition-all duration-300 group-hover:shadow-lg group-hover:shadow-[var(--accent-gold)]/30 group-hover:scale-105">
+            <span className="drop-shadow-sm">♔</span>
           </div>
-          <div className="flex flex-col">
-            <span className="font-serif text-[15px] font-bold leading-tight tracking-tight text-[var(--text-primary)]">
+          <div className="flex flex-col leading-none">
+            <span className="font-serif text-[15px] font-bold tracking-tight text-[var(--text-primary)]">
               Chess Puzzles
             </span>
-            <span className="hidden text-[9px] font-medium uppercase tracking-[0.15em] text-[var(--text-muted)] sm:block">
-              Sharpen Your Tactics
+            <span className="hidden text-[9px] font-medium uppercase tracking-[0.2em] text-[var(--text-muted)] sm:block">
+              Train Your Tactics
             </span>
           </div>
         </Link>
@@ -75,67 +79,82 @@ export default function Navbar() {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "nav-item relative flex items-center gap-1.5 rounded-lg px-3 py-[7px] text-[13px] font-medium transition-all duration-200",
+                  "relative flex items-center gap-1.5 px-3 py-2 text-[13px] font-medium transition-all duration-200",
                   active
-                    ? "text-[var(--text-primary)]"
-                    : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+                    ? "text-[var(--accent-gold)]"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]",
                 )}
               >
-                <span className="text-[13px]">{item.icon}</span>
-                <span>{item.label}</span>
                 {active && (
                   <motion.div
-                    layoutId="nav-active"
-                    className="absolute inset-0 rounded-lg bg-white/[0.07]"
-                    transition={{ type: "spring", bounce: 0.15, duration: 0.5 }}
+                    layoutId="nav-indicator"
+                    className="absolute bottom-0 left-2 right-2 h-[2px] rounded-full bg-[var(--accent-gold)]"
+                    transition={{ type: "spring", bounce: 0.2, duration: 0.5 }}
                   />
                 )}
+                <span className="text-[12px]">{item.icon}</span>
+                <span>{item.label}</span>
               </Link>
             );
           })}
         </div>
 
         {/* ─── Right actions ─── */}
-        <div className="flex items-center gap-2">
-          {/* Theme */}
+        <div className="flex items-center gap-1.5">
+          {/* Theme picker */}
           <div className="relative" ref={menuRef}>
             <button
-              onClick={() => setShowThemeMenu(!showThemeMenu)}
+              onClick={() => setShowThemeMenu((v) => !v)}
               className={cn(
-                "flex h-8 w-8 items-center justify-center rounded-lg text-sm transition-all duration-200",
+                "flex h-9 w-9 items-center justify-center rounded-full text-sm transition-all duration-200",
                 showThemeMenu
-                  ? "bg-white/[0.1] text-[var(--text-primary)]"
-                  : "text-[var(--text-muted)] hover:bg-white/[0.06] hover:text-[var(--text-secondary)]"
+                  ? "bg-[var(--accent-gold)]/15 text-[var(--text-primary)] ring-1 ring-[var(--accent-gold)]/25"
+                  : "text-[var(--text-muted)] hover:bg-[var(--bg-card)] hover:text-[var(--text-secondary)]",
               )}
-              title="Theme"
+              title="Change theme"
+              aria-label="Theme selector"
             >
               {themeOptions.find((t) => t.mode === theme)?.icon ?? "🎨"}
             </button>
+
             <AnimatePresence>
               {showThemeMenu && (
                 <motion.div
-                  initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                  initial={{ opacity: 0, scale: 0.92, y: -8 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: -4 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute right-0 top-full mt-2 w-44 overflow-hidden rounded-xl border border-white/[0.08] bg-[var(--bg-card)]/95 shadow-2xl shadow-black/50 backdrop-blur-xl"
+                  exit={{ opacity: 0, scale: 0.92, y: -8 }}
+                  transition={{ duration: 0.18, ease: "easeOut" }}
+                  className="absolute right-0 top-full mt-2.5 w-48 overflow-hidden rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] shadow-2xl shadow-black/40 backdrop-blur-2xl"
                 >
-                  <div className="p-1">
+                  <div className="p-1.5">
+                    <div className="mb-1 px-2.5 pt-1 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">
+                      Theme
+                    </div>
                     {themeOptions.map((opt) => (
                       <button
                         key={opt.mode}
-                        onClick={() => { setTheme(opt.mode); setShowThemeMenu(false); }}
+                        onClick={() => {
+                          setTheme(opt.mode);
+                          setShowThemeMenu(false);
+                        }}
                         className={cn(
-                          "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] transition-all duration-150",
+                          "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13px] transition-all duration-150",
                           theme === opt.mode
-                            ? "bg-white/[0.08] text-[var(--text-primary)]"
-                            : "text-[var(--text-secondary)] hover:bg-white/[0.04]"
+                            ? "bg-[var(--accent-gold)]/10 text-[var(--text-primary)]"
+                            : "text-[var(--text-secondary)] hover:bg-white/[0.04]",
                         )}
                       >
-                        <span>{opt.icon}</span>
-                        <span>{opt.label}</span>
+                        <span className="text-base">{opt.icon}</span>
+                        <span className="flex-1">{opt.label}</span>
                         {theme === opt.mode && (
-                          <span className="ml-auto text-xs text-[var(--accent-gold)]">●</span>
+                          <motion.span
+                            layoutId="theme-check"
+                            className="text-[var(--accent-gold)]"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          </motion.span>
                         )}
                       </button>
                     ))}
@@ -147,15 +166,30 @@ export default function Navbar() {
 
           {/* Mobile hamburger */}
           <button
-            onClick={() => setMobileOpen(!mobileOpen)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] hover:bg-white/[0.06] md:hidden"
-            aria-label="Menu"
+            onClick={() => setMobileOpen((v) => !v)}
+            className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-muted)] hover:bg-[var(--bg-card)] hover:text-[var(--text-secondary)] transition-all md:hidden"
+            aria-label={mobileOpen ? "Close menu" : "Open menu"}
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            >
               {mobileOpen ? (
-                <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>
+                <>
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </>
               ) : (
-                <><line x1="4" y1="7" x2="20" y2="7" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="17" x2="20" y2="17" /></>
+                <>
+                  <line x1="4" y1="7" x2="20" y2="7" />
+                  <line x1="4" y1="12" x2="20" y2="12" />
+                  <line x1="4" y1="17" x2="20" y2="17" />
+                </>
               )}
             </svg>
           </button>
@@ -169,25 +203,58 @@ export default function Navbar() {
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden border-t border-white/[0.04] md:hidden"
+            transition={{ duration: 0.25 }}
+            className="overflow-hidden border-t border-[var(--border-subtle)] md:hidden"
           >
             <div className="flex flex-col gap-1 px-4 py-3">
-              {navItems.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    "flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-                    isActive(item.href)
-                      ? "bg-white/[0.07] text-[var(--text-primary)]"
-                      : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
-                  )}
-                >
-                  <span>{item.icon}</span>
-                  <span>{item.label}</span>
-                </Link>
-              ))}
+              {navItems.map((item) => {
+                const active = isActive(item.href);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={cn(
+                      "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200",
+                      active
+                        ? "bg-[var(--accent-gold)]/10 text-[var(--text-primary)] border border-[var(--accent-gold)]/15"
+                        : "text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-white/[0.03]",
+                    )}
+                  >
+                    <span className="text-base">{item.icon}</span>
+                    <span>{item.label}</span>
+                    {active && (
+                      <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[var(--accent-gold)]" />
+                    )}
+                  </Link>
+                );
+              })}
+
+              {/* Mobile theme switcher */}
+              <div className="mt-2 border-t border-[var(--border-subtle)] pt-3">
+                <div className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">
+                  Theme
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {themeOptions.map((opt) => (
+                    <button
+                      key={opt.mode}
+                      onClick={() => {
+                        setTheme(opt.mode);
+                        setMobileOpen(false);
+                      }}
+                      className={cn(
+                        "flex items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-medium transition-all",
+                        theme === opt.mode
+                          ? "bg-[var(--accent-gold)]/10 text-[var(--text-primary)] ring-1 ring-[var(--accent-gold)]/20"
+                          : "text-[var(--text-muted)] hover:bg-white/[0.04]",
+                      )}
+                    >
+                      <span>{opt.icon}</span>
+                      <span className="truncate">{opt.label.split(" ").pop()}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </motion.div>
         )}

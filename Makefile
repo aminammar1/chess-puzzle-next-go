@@ -7,26 +7,39 @@ PY_BIN     := $(PY_VENV)/bin
 PY         := python3.14
 PY_PORT    := 8001
 
+GATEWAY_PORT := 3100
+
 .PHONY: help build run test vet tidy clean swagger swagger-install swagger-serve \
-        docker-up docker-up-detach docker-down docker-logs \
+        docker-up docker-up-detach docker-down docker-logs docker-build \
         voice-venv voice-install voice-run voice-dev voice-test voice-freeze voice-clean voice-docs \
         voice-lint voice-pytest voice-fmt voice-shell \
-        client-dev client-build client-lint dev
+        client-dev client-build client-lint client-fmt \
+        dev lint fmt build-all gateway-logs \
+        redis-cli check-env
+
+# ═══════════════════════════════════════════════
+# Help
+# ═══════════════════════════════════════════════
 
 help: ## Show available targets
-	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*##"}; {printf "  %-18s %s\n", $$1, $$2}'
+	@echo ""
+	@echo "  Chess Puzzle Next — Makefile"
+	@echo "  ════════════════════════════"
+	@echo ""
+	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*##"}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
+	@echo ""
 
-# ---------------------------------------------------------------------------
-# Local Go development
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════
+# Local Go development (puzzle-generator)
+# ═══════════════════════════════════════════════
 
 build: ## Build the Go binary
 	cd $(GO_SVC) && go build -ldflags="-s -w" -o bin/puzzle-generator ./cmd/server
 
-run: ## Run the service locally
+run: ## Run the Go service locally
 	cd $(GO_SVC) && go run ./cmd/server
 
-test: ## Run tests
+test: ## Run Go tests
 	cd $(GO_SVC) && go test ./...
 
 vet: ## Run go vet
@@ -46,28 +59,34 @@ swagger-serve: swagger run ## Run service and open Swagger at /swagger/index.htm
 clean: ## Remove build artifacts
 	rm -rf $(GO_SVC)/bin
 
-# ---------------------------------------------------------------------------
-# Docker
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════
+# Docker Compose — full stack
+# ═══════════════════════════════════════════════
 
-docker-up: ## Build and start (attached)
+docker-build: ## Build all Docker images without starting
+	docker compose build
+
+docker-up: ## Build and start all services (attached)
 	docker compose up --build
 
-docker-up-detach: ## Build and start (detached)
+docker-up-detach: ## Build and start all services (detached)
 	docker compose up --build -d
 
 docker-down: ## Stop and remove containers
 	docker compose down
 
-docker-logs: ## Tail container logs
+docker-logs: ## Tail all container logs
 	docker compose logs -f
+
+gateway-logs: ## Tail API gateway logs only
+	docker compose logs -f api-gateway
 
 redis-cli: ## Open Redis CLI shell
 	docker compose exec redis redis-cli
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════
 # Voice-to-Move (Python / FastAPI)
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════
 
 voice-venv: ## Create Python 3.14 virtualenv
 	$(PY) -m venv $(PY_VENV)
@@ -97,7 +116,7 @@ voice-docs: ## Open voice service Swagger docs URL
 voice-pytest: ## Run Python tests
 	cd $(PY_SVC) && $(CURDIR)/$(PY_BIN)/python -m pytest tests/ -v
 
-voice-lint: ## Lint Python code with ruff (install if missing)
+voice-lint: ## Lint Python code with ruff
 	$(PY_BIN)/pip install -q ruff 2>/dev/null; cd $(PY_SVC) && $(CURDIR)/$(PY_BIN)/ruff check .
 
 voice-fmt: ## Format Python code with ruff
@@ -106,9 +125,9 @@ voice-fmt: ## Format Python code with ruff
 voice-shell: ## Activate venv in a sub-shell
 	@echo "Run: source $(PY_VENV)/bin/activate"
 
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════
 # Client (Next.js)
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════
 
 client-dev: ## Start Next.js dev server
 	cd client && npm run dev
@@ -119,12 +138,37 @@ client-build: ## Build Next.js for production
 client-lint: ## Lint Next.js project
 	cd client && npm run lint
 
-# ---------------------------------------------------------------------------
-# Run everything
-# ---------------------------------------------------------------------------
+client-fmt: ## Format client code with prettier (if installed)
+	cd client && npx prettier --write "**/*.{ts,tsx,css,json}" 2>/dev/null || echo "Install prettier: npm i -D prettier"
 
-dev: ## Start Go + Python + Client in parallel
-	@echo "Starting all services..."
+# ═══════════════════════════════════════════════
+# Cross-cutting: lint, format, build all
+# ═══════════════════════════════════════════════
+
+lint: vet voice-lint client-lint ## Lint all services (Go + Python + Next.js)
+
+fmt: voice-fmt client-fmt ## Format all code (Python + Next.js)
+
+build-all: build docker-build client-build ## Build everything (Go binary + Docker images + Next.js)
+
+test-all: test voice-pytest ## Run all tests (Go + Python)
+
+check-env: ## Verify required env files exist
+	@echo "Checking environment files..."
+	@test -f $(GO_SVC)/.env && echo "  ✓ puzzle-generator/.env" || echo "  ✗ puzzle-generator/.env missing (copy from .env.exemple)"
+	@test -f client/.env.local && echo "  ✓ client/.env.local" || echo "  ✗ client/.env.local missing (copy from .env.example)"
+	@echo "Done."
+
+# ═══════════════════════════════════════════════
+# Run everything locally (development)
+# ═══════════════════════════════════════════════
+
+dev: ## Start Go + Python + Client in parallel (local dev)
+	@echo "Starting all services in parallel..."
+	@echo "  → Puzzle Generator  :8080"
+	@echo "  → Voice-to-Move     :$(PY_PORT)"
+	@echo "  → Next.js Client    :3000"
+	@echo ""
 	@$(MAKE) run &
 	@$(MAKE) voice-dev &
 	@$(MAKE) client-dev

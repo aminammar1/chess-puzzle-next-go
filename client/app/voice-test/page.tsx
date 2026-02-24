@@ -5,21 +5,34 @@ import { Chess } from "chess.js";
 import type { Square } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import { motion, AnimatePresence } from "framer-motion";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Mic,
+  RotateCcw,
+  SkipBack,
+  SkipForward,
+  Undo2,
+} from "lucide-react";
 import { useTheme } from "@/lib/theme";
 import { playMoveSound, playCaptureSound } from "@/lib/sounds";
+import { speak, announceMove, stopSpeaking } from "@/lib/speech";
+import { getVoiceStatusConfig, type VoiceStatus } from "@/lib/voice-ui";
 import Navbar from "@/components/layout/Navbar";
 import Tooltip from "@/components/ui/Tooltip";
-import Switch from "@/components/ui/Switch";
 import Chip from "@/components/ui/Chip";
 import Card, { CardBody } from "@/components/ui/Card";
 import Divider from "@/components/ui/Divider";
+import VoiceStateIcon from "@/components/voice/VoiceStateIcon";
+import { useVoiceModeCommands } from "@/hooks/useVoiceModeCommands";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-type MicStatus = "idle" | "listening" | "processing" | "success" | "error";
+type MicStatus = VoiceStatus;
 
 export default function VoiceTestPage() {
   const { colors } = useTheme();
+
   /* ── game state ─────────────────────────────── */
   const gameRef = useRef(new Chess());
   const [fen, setFen] = useState(INITIAL_FEN);
@@ -34,7 +47,6 @@ export default function VoiceTestPage() {
 
   const game = gameRef.current;
   const isLive = viewIndex === -1 || viewIndex === moveHistory.length - 1;
-  const displayFen = isLive ? fen : moveHistory[viewIndex]?.fen ?? fen;
 
   /* ── Voice ─────────────────────────────────── */
   const [micStatus, setMicStatus] = useState<MicStatus>("idle");
@@ -43,19 +55,30 @@ export default function VoiceTestPage() {
   const [voiceError, setVoiceError] = useState("");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const wakeRecognitionRef = useRef<any>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const useFallbackRef = useRef(false); // true = browser STT failed, use server-side
+  const useFallbackRef = useRef(false);
+  const recorderStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipNextRecorderResultRef = useRef(false);
+  const wakeFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wakeFallbackRunningRef = useRef(false);
   const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /* ── Auto / continuous mode ────────────────── */
   const [autoMode, setAutoMode] = useState(false);
   const autoModeRef = useRef(false);
   const autoRestartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const AUTO_TIMEOUT_MS = 30_000; // 30 seconds of silence → exit auto mode
+  const RECORDER_WINDOW_MS = 5000;
+
   useEffect(() => { autoModeRef.current = autoMode; }, [autoMode]);
 
   /* ── helpers ───────────────────────────────── */
-  const currentTurn = game.turn(); // "w" | "b"
+  const currentTurn = game.turn();
+  const isGameOver = game.isGameOver();
 
   const getLegalTargets = useCallback(
     (sq: string): string[] => {
@@ -68,7 +91,6 @@ export default function VoiceTestPage() {
     [game],
   );
 
-  /** Only the side to move can pick up pieces */
   function isMovablePiece(sq: string): boolean {
     const p = game.get(sq as Square);
     if (!p) return false;
@@ -166,19 +188,14 @@ export default function VoiceTestPage() {
   }
 
   /* ── history navigation ────────────────────── */
-  function goToStart() {
-    setViewIndex(-2);
-    setSelected(null);
-    setTargets([]);
-  }
+  function goToStart() { setViewIndex(-2); setSelected(null); setTargets([]); }
   function goBack() {
     setViewIndex((prev) => {
       if (prev === -2) return -2;
       if (prev === -1) return moveHistory.length >= 2 ? moveHistory.length - 2 : -2;
       return prev <= 0 ? -2 : prev - 1;
     });
-    setSelected(null);
-    setTargets([]);
+    setSelected(null); setTargets([]);
   }
   function goForward() {
     setViewIndex((prev) => {
@@ -186,16 +203,10 @@ export default function VoiceTestPage() {
       if (prev === -2) return moveHistory.length > 0 ? 0 : -1;
       return prev >= moveHistory.length - 1 ? -1 : prev + 1;
     });
-    setSelected(null);
-    setTargets([]);
+    setSelected(null); setTargets([]);
   }
-  function goToEnd() {
-    setViewIndex(-1);
-    setSelected(null);
-    setTargets([]);
-  }
+  function goToEnd() { setViewIndex(-1); setSelected(null); setTargets([]); }
 
-  // keyboard shortcuts
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       if (e.key === "ArrowLeft") { e.preventDefault(); goBack(); }
@@ -269,25 +280,68 @@ export default function VoiceTestPage() {
     if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current);
   }, []);
 
-  /** Schedule auto-restart of listening (auto mode) */
   const scheduleAutoRestart = useCallback((delayMs = 800) => {
     if (autoRestartTimerRef.current) clearTimeout(autoRestartTimerRef.current);
     autoRestartTimerRef.current = setTimeout(() => {
       if (autoModeRef.current) {
-        // We'll call startListening indirectly via ref
         startListeningRef.current?.();
       }
     }, delayMs);
   }, []);
 
-  // Ref to break circular dependency between processVoiceText → scheduleAutoRestart → startListening
+  /* ── Inactivity timer for auto-mode (30s) ── */
+  const resetInactivityTimer = useCallback(() => {
+    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+    if (!autoModeRef.current) return;
+    inactivityTimerRef.current = setTimeout(() => {
+      if (autoModeRef.current) {
+        toggleAutoRef.current?.(false);
+        speak("No speech detected. Auto mode off.");
+      }
+    }, AUTO_TIMEOUT_MS);
+  }, []);
+
+  const clearInactivityTimer = useCallback(() => {
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
+    }
+  }, []);
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const startListeningRef = useRef<(() => void) | null>(null);
+  const toggleAutoRef = useRef<((on: boolean, reason?: "manual" | "voice-stop") => void) | null>(null);
+
+  const applyStopFeedback = useCallback(() => {
+    setMicStatus("stopped");
+    setVoiceError("Auto listening stopped");
+    clearStatusTimeout();
+    statusTimeoutRef.current = setTimeout(() => {
+      setMicStatus("idle");
+      setVoiceError("");
+      setTranscript("");
+      setParsedSan("");
+    }, 1300);
+  }, [clearStatusTimeout]);
+
+  const handleModeCommand = useVoiceModeCommands({
+    isAutoMode: () => autoModeRef.current,
+    onPlay: () => toggleAutoRef.current?.(true),
+    onStop: () => toggleAutoRef.current?.(false, "voice-stop"),
+  });
 
   const processVoiceText = useCallback(
     async (text: string) => {
+      if (handleModeCommand(text)) {
+        return;
+      }
+
       setMicStatus("processing");
       setTranscript(text);
+
+      // Reset 30s inactivity timer — user spoke
+      resetInactivityTimer();
+
       try {
         const res = await fetch("/voice-api/voice/parse", {
           method: "POST",
@@ -323,17 +377,16 @@ export default function VoiceTestPage() {
             setMicStatus("success");
             setParsedSan(data.san || data.uci);
             setVoiceError("");
-            // Auto mode → restart listening after brief feedback
-            if (autoModeRef.current) scheduleAutoRestart(900);
+            announceMove(data.san || data.uci);
           } else {
             setMicStatus("error");
             setVoiceError(`"${text}" → ${data.san || "?"} — illegal move`);
-            if (autoModeRef.current) scheduleAutoRestart(1500);
+            if (autoModeRef.current) speak("Illegal move. Try again.");
           }
         } else {
           setMicStatus("error");
           setVoiceError(`Couldn't parse: "${text}"`);
-          if (autoModeRef.current) scheduleAutoRestart(1500);
+          if (autoModeRef.current) speak("Not recognized. Try again.");
         }
       } catch {
         setMicStatus("error");
@@ -342,7 +395,6 @@ export default function VoiceTestPage() {
       clearStatusTimeout();
       statusTimeoutRef.current = setTimeout(() => {
         setMicStatus((prev) => {
-          // In auto mode don't reset to idle if we're about to restart
           if (autoModeRef.current && (prev === "success" || prev === "error")) return prev;
           return "idle";
         });
@@ -353,20 +405,44 @@ export default function VoiceTestPage() {
         }
       }, 4000);
     },
-    [game, applyMove, clearStatusTimeout, scheduleAutoRestart],
+    [game, applyMove, clearStatusTimeout, scheduleAutoRestart, handleModeCommand],
   );
 
-  /* ── MediaRecorder fallback (records audio → sends to our server) ── */
+  /* ── MediaRecorder fallback ── */
   const startMediaRecorder = useCallback(async () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") return;
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
       audioChunksRef.current = [];
+      skipNextRecorderResultRef.current = false;
       recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
       recorder.onstop = async () => {
+        if (recorderStopTimerRef.current) {
+          clearTimeout(recorderStopTimerRef.current);
+          recorderStopTimerRef.current = null;
+        }
+
         stream.getTracks().forEach((t) => t.stop());
+
+        if (skipNextRecorderResultRef.current) {
+          skipNextRecorderResultRef.current = false;
+          mediaRecorderRef.current = null;
+          setMicStatus("idle");
+          return;
+        }
+
         const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        if (blob.size < 500) { setMicStatus("error"); setVoiceError("No audio captured"); return; }
+        if (blob.size < 500) {
+          setMicStatus("error");
+          setVoiceError("No audio captured");
+          if (autoModeRef.current) {
+            speak("I did not hear a move. Still listening.");
+            scheduleAutoRestart(220);
+          }
+          return;
+        }
         setMicStatus("processing");
         setTranscript("(analyzing audio…)");
         try {
@@ -376,6 +452,15 @@ export default function VoiceTestPage() {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
           setTranscript(data.raw_transcript || "");
+
+          const rawTranscript = (data.raw_transcript || "").trim();
+          if (rawTranscript) {
+            if (handleModeCommand(rawTranscript)) {
+              mediaRecorderRef.current = null;
+              return;
+            }
+          }
+
           if (data.san || data.uci) {
             let moved = false;
             if (data.san) {
@@ -397,37 +482,62 @@ export default function VoiceTestPage() {
               const promo = data.uci.length > 4 ? data.uci[4] : undefined;
               moved = applyMove(from, to, promo);
             }
-            if (moved) { setMicStatus("success"); setParsedSan(data.san || data.uci); setVoiceError(""); if (autoModeRef.current) scheduleAutoRestart(900); }
-            else { setMicStatus("error"); setVoiceError(`"${data.raw_transcript}" → ${data.san || "?"} — illegal`); if (autoModeRef.current) scheduleAutoRestart(1500); }
+            if (moved) { setMicStatus("success"); setParsedSan(data.san || data.uci); setVoiceError(""); announceMove(data.san || data.uci); }
+            else { setMicStatus("error"); setVoiceError(`"${data.raw_transcript}" → ${data.san || "?"} — illegal`); if (autoModeRef.current) speak("Illegal move."); }
           } else {
             setMicStatus("error");
             setVoiceError(data.raw_transcript ? `Couldn't parse: "${data.raw_transcript}"` : "No speech detected");
-            if (autoModeRef.current) scheduleAutoRestart(1500);
+            if (autoModeRef.current) speak("Not recognized.");
           }
         } catch {
           setMicStatus("error");
           setVoiceError("Voice server unreachable — run: make voice-dev");
         }
-        clearStatusTimeout();
-        statusTimeoutRef.current = setTimeout(() => { setMicStatus("idle"); setTranscript(""); setParsedSan(""); setVoiceError(""); }, 4000);
+
+        mediaRecorderRef.current = null;
+
+        if (autoModeRef.current) {
+          clearStatusTimeout();
+          statusTimeoutRef.current = setTimeout(() => {
+            setTranscript("");
+            setParsedSan("");
+            setVoiceError("");
+          }, 1800);
+          scheduleAutoRestart(220);
+        } else {
+          clearStatusTimeout();
+          statusTimeoutRef.current = setTimeout(() => { setMicStatus("idle"); setTranscript(""); setParsedSan(""); setVoiceError(""); }, 4000);
+        }
       };
       mediaRecorderRef.current = recorder;
       recorder.start();
+
+      if (recorderStopTimerRef.current) clearTimeout(recorderStopTimerRef.current);
+      recorderStopTimerRef.current = setTimeout(() => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+          mediaRecorderRef.current.stop();
+        }
+      }, RECORDER_WINDOW_MS);
+
       setMicStatus("listening");
       setTranscript("");
     } catch {
       setMicStatus("error");
       setVoiceError("Microphone access denied");
     }
-  }, [game, applyMove, clearStatusTimeout, scheduleAutoRestart]);
+  }, [game, applyMove, clearStatusTimeout, scheduleAutoRestart, handleModeCommand]);
 
   const startListening = useCallback(() => {
+    if (wakeRecognitionRef.current) {
+      wakeRecognitionRef.current.abort();
+      wakeRecognitionRef.current = null;
+    }
+
     setMicStatus("listening");
     setTranscript("");
     setParsedSan("");
     setVoiceError("");
 
-    // If browser STT previously failed with network error, go straight to fallback
     if (useFallbackRef.current) {
       startMediaRecorder();
       return;
@@ -435,7 +545,6 @@ export default function VoiceTestPage() {
 
     const hasBrowserSTT = ("webkitSpeechRecognition" in window) || ("SpeechRecognition" in window);
     if (!hasBrowserSTT) {
-      // No browser STT at all — use server-side recording
       useFallbackRef.current = true;
       startMediaRecorder();
       return;
@@ -444,9 +553,10 @@ export default function VoiceTestPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
-    recognition.continuous = false;
+    recognition.continuous = autoModeRef.current;
     recognition.interimResults = true;
     recognition.lang = "en-US";
+    recognition.maxAlternatives = 3;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recognition.onresult = (event: any) => {
       const current = event.results[event.results.length - 1];
@@ -457,123 +567,232 @@ export default function VoiceTestPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recognition.onerror = (event: any) => {
       if (event.error === "network" || event.error === "service-not-allowed") {
-        // Browser STT needs internet / HTTPS — switch to server-side fallback
         useFallbackRef.current = true;
         recognition.abort();
         startMediaRecorder();
         return;
       }
+      if (event.error === "no-speech" && autoModeRef.current) return;
       setMicStatus("error");
       setVoiceError(event.error === "no-speech" ? "No speech detected" : `Mic error: ${event.error}`);
     };
     recognition.onend = () => {
-      setMicStatus((prev) => (prev === "listening" ? "idle" : prev));
-      // Auto mode: if recognition ended without error and we're still in auto mode, schedule restart
-      if (autoModeRef.current) scheduleAutoRestart(600);
+      recognitionRef.current = null;
+      if (autoModeRef.current) {
+        setTimeout(() => {
+          if (autoModeRef.current) startListeningRef.current?.();
+          else setMicStatus((prev) => (prev === "listening" ? "idle" : prev));
+        }, 200);
+      } else {
+        setMicStatus((prev) => (prev === "listening" ? "idle" : prev));
+      }
     };
     recognitionRef.current = recognition;
     recognition.start();
   }, [processVoiceText, startMediaRecorder, scheduleAutoRestart]);
 
-  // Keep ref in sync for auto-restart
   useEffect(() => { startListeningRef.current = startListening; }, [startListening]);
 
-  const stopListening = useCallback(() => {
-    // Cancel any pending auto-restart
+  const runWakeFallbackCycle = useCallback(async () => {
+    if (wakeFallbackRunningRef.current) return;
+    if (!useFallbackRef.current) return;
+    if (autoModeRef.current) return;
+    if (recognitionRef.current || wakeRecognitionRef.current) return;
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") return;
+    if (isGameOver) return;
+
+    wakeFallbackRunningRef.current = true;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      const chunks: Blob[] = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      await new Promise<void>((resolve) => {
+        recorder.onstop = () => {
+          stream.getTracks().forEach((t) => t.stop());
+          resolve();
+        };
+        recorder.start();
+        setTimeout(() => {
+          if (recorder.state === "recording") recorder.stop();
+        }, 2200);
+      });
+
+      const blob = new Blob(chunks, { type: "audio/webm" });
+      if (blob.size > 500) {
+        const form = new FormData();
+        form.append("audio", blob, "wake.webm");
+        const res = await fetch("/voice-api/voice/transcribe", { method: "POST", body: form });
+        if (res.ok) {
+          const data = await res.json();
+          const heard = (data.raw_transcript || "").trim();
+          if (heard) {
+            if (handleModeCommand(heard)) {
+              return;
+            }
+          }
+        }
+      }
+    } catch {
+      // keep silent in wake mode
+    } finally {
+      wakeFallbackRunningRef.current = false;
+    }
+
+    if (!autoModeRef.current && useFallbackRef.current && !isGameOver) {
+      if (wakeFallbackTimerRef.current) clearTimeout(wakeFallbackTimerRef.current);
+      wakeFallbackTimerRef.current = setTimeout(() => {
+        runWakeFallbackCycle();
+      }, 350);
+    }
+  }, [isGameOver]);
+
+  const startWakeCommandListener = useCallback(() => {
+    if (wakeRecognitionRef.current) return;
+    if (autoModeRef.current) return;
+    if (recognitionRef.current) return;
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") return;
+    if (useFallbackRef.current) return;
+    if (isGameOver) return;
+
+    const hasBrowserSTT = ("webkitSpeechRecognition" in window) || ("SpeechRecognition" in window);
+    if (!hasBrowserSTT) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const wake = new SR();
+    wake.continuous = true;
+    wake.interimResults = false;
+    wake.lang = "en-US";
+    wake.maxAlternatives = 1;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    wake.onresult = (event: any) => {
+      const current = event.results[event.results.length - 1];
+      if (!current?.isFinal) return;
+      const text = current[0]?.transcript || "";
+      handleModeCommand(text);
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    wake.onerror = (event: any) => {
+      if (["network", "service-not-allowed", "not-allowed", "audio-capture"].includes(event.error)) {
+        useFallbackRef.current = true;
+        wakeRecognitionRef.current = null;
+        runWakeFallbackCycle();
+        return;
+      }
+      if (event.error !== "aborted" && event.error !== "no-speech") {
+        wakeRecognitionRef.current = null;
+      }
+    };
+
+    wake.onend = () => {
+      wakeRecognitionRef.current = null;
+      if (!autoModeRef.current && !recognitionRef.current && !isGameOver) {
+        setTimeout(() => {
+          if (!wakeRecognitionRef.current) startWakeCommandListener();
+        }, 350);
+      }
+    };
+
+    wakeRecognitionRef.current = wake;
+    wake.start();
+  }, [isGameOver, runWakeFallbackCycle, handleModeCommand]);
+
+  const stopListening = useCallback((opts?: { preserveStatus?: boolean }) => {
     if (autoRestartTimerRef.current) { clearTimeout(autoRestartTimerRef.current); autoRestartTimerRef.current = null; }
+    if (recorderStopTimerRef.current) { clearTimeout(recorderStopTimerRef.current); recorderStopTimerRef.current = null; }
     if (recognitionRef.current) { recognitionRef.current.stop(); recognitionRef.current = null; }
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-      mediaRecorderRef.current.stop(); // triggers onstop → processes audio
+      skipNextRecorderResultRef.current = true;
+      mediaRecorderRef.current.stop();
       return;
     }
-    setMicStatus("idle");
-  }, []);
-
-  /** Toggle auto mode on/off */
-  const toggleAutoMode = useCallback((on: boolean) => {
-    setAutoMode(on);
-    if (on) {
-      // Immediately start listening
-      startListeningRef.current?.();
-    } else {
-      // Stop everything
-      if (autoRestartTimerRef.current) { clearTimeout(autoRestartTimerRef.current); autoRestartTimerRef.current = null; }
-      if (recognitionRef.current) { recognitionRef.current.stop(); recognitionRef.current = null; }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-        mediaRecorderRef.current.stop();
-      }
+    if (!opts?.preserveStatus) {
       setMicStatus("idle");
-      setTranscript("");
-      setParsedSan("");
-      setVoiceError("");
     }
   }, []);
+
+  const toggleAutoMode = useCallback((on: boolean, reason: "manual" | "voice-stop" = "manual") => {
+    setAutoMode(on);
+    if (on) {
+      speak("Auto listen on. Say your moves. Say stop to end. Silence for 30 seconds will exit.");
+      resetInactivityTimer();
+      setTimeout(() => startListeningRef.current?.(), 600);
+    } else {
+      clearInactivityTimer();
+      stopListening({ preserveStatus: reason === "voice-stop" });
+      if (reason === "manual") {
+        setMicStatus("idle");
+        setTranscript("");
+        setParsedSan("");
+        setVoiceError("");
+      } else {
+        applyStopFeedback();
+      }
+      speak("Auto listen off.");
+    }
+  }, [resetInactivityTimer, clearInactivityTimer, stopListening, applyStopFeedback]);
+
+  // Keep toggle ref in sync
+  useEffect(() => { toggleAutoRef.current = toggleAutoMode; }, [toggleAutoMode]);
+
+  useEffect(() => {
+    if (!autoMode && micStatus !== "processing" && !isGameOver) {
+      const timer = setTimeout(() => {
+        if (useFallbackRef.current) runWakeFallbackCycle();
+        else startWakeCommandListener();
+      }, 250);
+      return () => clearTimeout(timer);
+    }
+
+    if (wakeRecognitionRef.current) {
+      wakeRecognitionRef.current.abort();
+      wakeRecognitionRef.current = null;
+    }
+    if (wakeFallbackTimerRef.current) {
+      clearTimeout(wakeFallbackTimerRef.current);
+      wakeFallbackTimerRef.current = null;
+    }
+  }, [autoMode, micStatus, isGameOver, startWakeCommandListener, runWakeFallbackCycle]);
 
   useEffect(() => {
     return () => {
       if (recognitionRef.current) recognitionRef.current.stop();
+      if (wakeRecognitionRef.current) wakeRecognitionRef.current.stop();
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") mediaRecorderRef.current.stop();
+      if (wakeFallbackTimerRef.current) clearTimeout(wakeFallbackTimerRef.current);
       if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current);
       if (autoRestartTimerRef.current) clearTimeout(autoRestartTimerRef.current);
+      if (recorderStopTimerRef.current) clearTimeout(recorderStopTimerRef.current);
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+      stopSpeaking();
     };
   }, []);
 
   /* ── derived UI ────────────────────────────── */
   const turnLabel = game.turn() === "w" ? "White" : "Black";
-  const isGameOver = game.isGameOver();
-
   const activeHistoryIdx = viewIndex === -1 ? moveHistory.length - 1 : viewIndex === -2 ? -1 : viewIndex;
 
-  // Suppress unused var from displayFen
-  void displayFen;
-
   /* ── Mic status styling ──────────────────── */
-  const statusColors: Record<MicStatus, { ring: string; bg: string; text: string; label: string }> = {
-    idle: {
-      ring: "ring-[var(--accent-gold)]/20",
-      bg: "bg-gradient-to-b from-[#3a2a1a] to-[#2c1e10]",
-      text: "text-[var(--accent-gold)]",
-      label: autoMode ? "Auto mode ready" : "Tap to speak",
-    },
-    listening: {
-      ring: "ring-red-500/40",
-      bg: "bg-gradient-to-b from-red-500/20 to-red-600/10",
-      text: "text-red-400",
-      label: "Listening…",
-    },
-    processing: {
-      ring: "ring-amber-500/30",
-      bg: "bg-gradient-to-b from-amber-500/15 to-amber-600/10",
-      text: "text-amber-400",
-      label: "Processing…",
-    },
-    success: {
-      ring: "ring-emerald-500/40",
-      bg: "bg-gradient-to-b from-emerald-500/20 to-emerald-600/10",
-      text: "text-emerald-400",
-      label: parsedSan || "Done",
-    },
-    error: {
-      ring: "ring-red-400/30",
-      bg: "bg-gradient-to-b from-red-400/15 to-red-500/10",
-      text: "text-red-400/80",
-      label: "Try again",
-    },
-  };
-
-  const sc = statusColors[micStatus];
+  const sc = getVoiceStatusConfig(micStatus, autoMode, parsedSan);
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: "var(--bg-primary)" }}>
       <Navbar />
 
-      <div className="mx-auto max-w-6xl px-4 py-6 sm:py-10">
+      <div className="mx-auto max-w-7xl px-4 py-6 sm:py-8">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="mb-6 text-center sm:mb-8"
+          className="mb-6 text-center"
         >
           <h1 className="font-serif text-2xl font-bold text-[var(--text-primary)] sm:text-3xl md:text-4xl">
             Voice{" "}
@@ -582,17 +801,17 @@ export default function VoiceTestPage() {
             </span>
           </h1>
           <p className="mt-1.5 text-xs text-[var(--text-muted)] sm:text-sm">
-            Play any move — drag, click, or speak it
+            Play any move — drag, click, or speak it. Built for blind &amp; hands-free play.
           </p>
         </motion.div>
 
-        <div className="flex flex-col items-center gap-5 lg:flex-row lg:items-start lg:justify-center lg:gap-8">
+        <div className="flex flex-col items-start gap-6 lg:flex-row lg:justify-center lg:gap-8">
           {/* ─── Board column ─── */}
           <motion.div
             initial={{ opacity: 0, scale: 0.97 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.5, delay: 0.1 }}
-            className="w-full max-w-[520px]"
+            className="w-full max-w-[560px] lg:max-w-[520px] xl:max-w-[560px] mx-auto lg:mx-0"
           >
             {/* Turn indicator */}
             <div className="mb-3 flex items-center justify-between rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-2.5">
@@ -618,7 +837,7 @@ export default function VoiceTestPage() {
             </div>
 
             {/* Board */}
-            <div className="chess-board-wrapper overflow-hidden rounded-xl">
+            <div className="chess-board-wrapper overflow-hidden rounded-xl shadow-xl shadow-black/30">
               <Chessboard
                 options={{
                   position: browseFen,
@@ -636,21 +855,66 @@ export default function VoiceTestPage() {
               />
             </div>
 
+            {/* ── Controls bar ── */}
+            <div className="mt-3 flex items-center justify-center gap-1">
+              {([
+                { label: "Start (Home)", action: goToStart, disabled: moveHistory.length === 0, icon: <SkipBack size={14} /> },
+                { label: "Back (←)", action: goBack, disabled: moveHistory.length === 0, icon: <ChevronLeft size={14} /> },
+                { label: "Forward (→)", action: goForward, disabled: isLive || moveHistory.length === 0, icon: <ChevronRight size={14} /> },
+                { label: "End", action: goToEnd, disabled: isLive || moveHistory.length === 0, icon: <SkipForward size={14} /> },
+              ] as const).map((btn) => (
+                <Tooltip key={btn.label} content={btn.label} side="top">
+                  <button onClick={btn.action} disabled={btn.disabled} className="board-ctrl-btn">
+                    {btn.icon}
+                  </button>
+                </Tooltip>
+              ))}
+              <Divider orientation="vertical" className="mx-1.5 h-5" />
+              <Tooltip content="Undo" side="top">
+                <button onClick={undoMove} disabled={moveHistory.length === 0} className="board-ctrl-btn">
+                  <Undo2 size={14} />
+                </button>
+              </Tooltip>
+              <Tooltip content="Reset board" side="top">
+                <button onClick={resetBoard} className="board-ctrl-btn">
+                  <RotateCcw size={14} />
+                </button>
+              </Tooltip>
+            </div>
+          </motion.div>
+
+          {/* ─── Right panel ─── */}
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+            className="w-full max-w-[560px] lg:max-w-[340px] mx-auto lg:mx-0 space-y-4"
+          >
             {/* ══════ Mic Control Panel ══════ */}
-            <div className="mt-5 rounded-2xl border border-white/[0.06] bg-white/[0.015] p-5">
-              {/* Mode switcher — clean pill design */}
+            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.015] p-5">
+              {/* Mode switcher */}
               <div className="mb-5 flex items-center justify-center">
                 <div className="flex items-center gap-3 rounded-full border border-white/[0.06] bg-white/[0.02] px-4 py-2">
                   <span className={`text-xs font-medium transition-colors ${!autoMode ? "text-[var(--text-primary)]" : "text-[var(--text-muted)]"}`}>
                     Push to talk
                   </span>
-                  <Switch
-                    checked={autoMode}
-                    onCheckedChange={toggleAutoMode}
+                  <button
+                    onClick={() => toggleAutoMode(!autoMode)}
                     disabled={isGameOver}
-                    size="sm"
-                    color="green"
-                  />
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-white/[0.06] transition-colors duration-200
+                      ${autoMode ? "bg-emerald-600" : "bg-white/[0.08]"}
+                      ${isGameOver ? "cursor-not-allowed opacity-40" : ""}
+                    `}
+                    role="switch"
+                    aria-checked={autoMode}
+                    aria-label="Toggle auto listening mode"
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200
+                        ${autoMode ? "translate-x-4" : "translate-x-0.5"}
+                      `}
+                    />
+                  </button>
                   <span className={`text-xs font-medium transition-colors ${autoMode ? "text-emerald-400" : "text-[var(--text-muted)]"}`}>
                     Auto
                   </span>
@@ -663,7 +927,7 @@ export default function VoiceTestPage() {
                 </div>
               </div>
 
-              {/* Mic button — centered, clean */}
+              {/* Mic button */}
               <div className="flex flex-col items-center gap-3">
                 <Tooltip
                   content={
@@ -675,63 +939,30 @@ export default function VoiceTestPage() {
                 >
                   <button
                     onClick={() => {
-                      if (autoMode) {
-                        toggleAutoMode(false);
-                      } else {
-                        micStatus === "listening" ? stopListening() : startListening();
-                      }
+                      if (autoMode) { toggleAutoMode(false); }
+                      else { micStatus === "listening" ? stopListening() : startListening(); }
                     }}
                     disabled={isGameOver}
                     className={`
                       group relative flex h-16 w-16 items-center justify-center rounded-full
-                      border border-white/[0.1]
-                      ring-[3px] ${sc.ring}
-                      ${sc.bg}
+                      border border-white/[0.1] ring-[3px] ${sc.ring} ${sc.bg}
                       transition-all duration-300 ease-out
                       ${isGameOver ? "cursor-not-allowed opacity-30" : "cursor-pointer hover:scale-105 active:scale-95"}
                     `}
                     aria-label={micStatus === "listening" ? "Stop listening" : "Start listening"}
                   >
-                    {/* Pulse ring when listening */}
                     {micStatus === "listening" && (
                       <span className="absolute inset-[-6px] rounded-full border border-red-500/25 animate-ping pointer-events-none" />
                     )}
-                    {/* Spin border when processing */}
-                    {micStatus === "processing" && (
-                      <span className="absolute inset-[-4px] rounded-full border-2 border-amber-500/20 border-t-amber-400 animate-spin pointer-events-none" />
+                    {micStatus === "stopped" && (
+                      <span className="absolute inset-[-5px] rounded-full border border-blue-400/35 animate-pulse pointer-events-none" />
                     )}
-                    {/* Icon */}
                     <span className="relative z-10">
-                      {micStatus === "listening" ? (
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" className="text-red-400">
-                          <rect x="6" y="6" width="12" height="12" rx="3" />
-                        </svg>
-                      ) : micStatus === "processing" ? (
-                        <div className="flex gap-1">
-                          {[0, 150, 300].map((d) => (
-                            <span key={d} className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-bounce" style={{ animationDelay: `${d}ms` }} />
-                          ))}
-                        </div>
-                      ) : micStatus === "success" ? (
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-400">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      ) : micStatus === "error" ? (
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-red-400">
-                          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
-                      ) : (
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--accent-gold)] transition-colors group-hover:text-amber-300">
-                          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                          <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                          <line x1="12" x2="12" y1="19" y2="22" />
-                        </svg>
-                      )}
+                      <VoiceStateIcon status={micStatus} size={24} idleClassName="text-[var(--accent-gold)] transition-colors group-hover:text-amber-300" />
                     </span>
                   </button>
                 </Tooltip>
 
-                {/* Status label */}
                 <span className={`text-[11px] font-medium tracking-wide transition-colors duration-300 ${sc.text}`}>
                   {sc.label}
                 </span>
@@ -749,8 +980,9 @@ export default function VoiceTestPage() {
                 >
                   {micStatus === "idle" && !transcript && (
                     <span className="text-[11px] text-[var(--text-muted)]">
-                      🎤 {autoMode ? "Toggle auto above to start" : "Tap mic & say"}{" "}
-                      {!autoMode && <span className="font-medium text-[var(--text-secondary)]">&quot;e2 to e4&quot;</span>}
+                      {autoMode ? (<>Auto mode — speak moves · say <span className="font-medium text-emerald-400/80">&quot;stop&quot;</span> to end</>) : (
+                        <>Tap mic &amp; say <span className="font-medium text-[var(--text-secondary)]">&quot;e2 to e4&quot;</span> · say <span className="font-medium text-emerald-400/80">&quot;play&quot;</span> for auto</>
+                      )}
                     </span>
                   )}
                   {micStatus === "listening" && (
@@ -763,64 +995,35 @@ export default function VoiceTestPage() {
                     </span>
                   )}
                   {micStatus === "processing" && (
-                    <span className="text-[11px] text-amber-400">Parsing &quot;{transcript}&quot;…</span>
+                    <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-amber-400">
+                      <span>Processing move</span>
+                      <span className="inline-flex">
+                        {[0, 140, 280].map((delay) => (
+                          <span
+                            key={delay}
+                            className="mx-[1px] h-1 w-1 rounded-full bg-amber-400/90 animate-pulse"
+                            style={{ animationDelay: `${delay}ms` }}
+                          />
+                        ))}
+                      </span>
+                    </span>
                   )}
                   {micStatus === "success" && (
-                    <Chip color="green" variant="flat" size="sm" startContent={<span>✓</span>}>
-                      {parsedSan}
-                    </Chip>
+                    <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
+                      ✓ {parsedSan}
+                    </span>
                   )}
                   {micStatus === "error" && (
                     <span className="text-[11px] text-red-400/90">{voiceError}</span>
+                  )}
+                  {micStatus === "stopped" && (
+                    <span className="text-[11px] text-blue-300/90">Auto listening stopped</span>
                   )}
                 </motion.div>
               </AnimatePresence>
             </div>
 
-            {/* ── Controls bar ── */}
-            <div className="mt-3 flex items-center justify-center gap-1">
-              {/* Navigation */}
-              {([
-                { label: "Start (Home)", action: goToStart, disabled: moveHistory.length === 0, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.41 16.59L13.82 12l4.59-4.59L17 6l-6 6 6 6 1.41-1.41zM6 6h2v12H6V6z" /></svg> },
-                { label: "Back (←)", action: goBack, disabled: moveHistory.length === 0, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" /></svg> },
-                { label: "Forward (→)", action: goForward, disabled: !isLive ? false : true || moveHistory.length === 0, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z" /></svg> },
-                { label: "End", action: goToEnd, disabled: isLive || moveHistory.length === 0, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M5.59 7.41L10.18 12l-4.59 4.59L7 18l6-6-6-6-1.41 1.41zM16 6h2v12h-2V6z" /></svg> },
-              ] as const).map((btn) => (
-                <Tooltip key={btn.label} content={btn.label} side="top">
-                  <button
-                    onClick={btn.action}
-                    disabled={btn.disabled}
-                    className="board-ctrl-btn"
-                  >
-                    {btn.icon}
-                  </button>
-                </Tooltip>
-              ))}
-
-              <Divider orientation="vertical" className="mx-1.5 h-5" />
-
-              {/* Undo & Reset */}
-              <Tooltip content="Undo" side="top">
-                <button onClick={undoMove} disabled={moveHistory.length === 0} className="board-ctrl-btn">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 8c-2.65 0-5.05 1.04-6.83 2.73L3 8v9h9l-2.83-2.83c1.28-1.28 3.05-2.03 5-2.03 3.04 0 5.58 2.14 6.2 5l1.96-.66C21.46 13.16 17.34 8 12.5 8z" /></svg>
-                </button>
-              </Tooltip>
-              <Tooltip content="Reset board" side="top">
-                <button onClick={resetBoard} className="board-ctrl-btn">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" /></svg>
-                </button>
-              </Tooltip>
-            </div>
-          </motion.div>
-
-          {/* ─── Side panel ─── */}
-          <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-            className="w-full max-w-[260px] space-y-3"
-          >
-            {/* Move sheet */}
+            {/* Move notation */}
             <Card className="shadow-none">
               <CardBody>
                 <h3 className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
@@ -829,7 +1032,7 @@ export default function VoiceTestPage() {
                     {Math.ceil(moveHistory.length / 2)} moves
                   </span>
                 </h3>
-                <div className="max-h-[300px] overflow-y-auto pr-1 scrollbar-thin">
+                <div className="max-h-[240px] overflow-y-auto pr-1 scrollbar-thin">
                   {moveHistory.length === 0 ? (
                     <p className="py-4 text-center text-[11px] italic text-[var(--text-muted)]">Play or speak a move…</p>
                   ) : (

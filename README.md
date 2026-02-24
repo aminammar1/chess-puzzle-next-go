@@ -1,37 +1,69 @@
-# Chess Puzzle Next
+# ♔ Chess Puzzle Next
 
-Next-level chess puzzle trainer powered by microservices, AI, and real-time session tracking.
+> Next-level chess puzzle trainer powered by microservices, AI, voice control, and real-time session tracking.
 
-Fresh puzzles from **multiple sources** — Lichess API, a 4M+ puzzle dataset, and an **AI-powered RAG pipeline** that picks the perfect puzzle for your request. Solve by clicking pieces, or just **speak your move**. Your voice is transcribed and converted into accurate chess notation automatically.
+Fresh puzzles from **multiple sources** — Lichess API, a 4M+ puzzle dataset, and an **AI-powered RAG pipeline** that picks the perfect puzzle for your request. Solve by clicking pieces, or just **speak your move** — your voice is transcribed and converted into accurate chess notation automatically.
+
+---
+
+## Table of Contents
+
+- [Architecture](#architecture)
+- [Puzzle Generator Diagram](#puzzle-generator-diagram)
+- [Puzzle Sources](#puzzle-sources)
+- [AI Feature — RAG Pipeline](#ai-feature--rag-pipeline)
+- [Voice-to-Move](#voice-to-move--how-it-works)
+- [API Gateway](#api-gateway)
+- [Redis — Session & Cache](#redis--session--cache-layer)
+- [Services](#services)
+- [Getting Started](#getting-started)
+- [Environment Variables](#environment-variables)
+- [Makefile Commands](#makefile-commands)
+- [Tech Stack](#tech-stack)
+- [Project Structure](#project-structure)
+- [Contributing](#contributing)
 
 ---
 
 ## Architecture
 
 ```
-                          ┌──────────────────────────┐
-                          │        Redis 8            │
-                          │  Sessions · Daily Cache   │
-                          │  Stats · LRU Eviction     │
-                          └────────────┬─────────────┘
-                                       │
-  ┌─────────────────┐     ┌────────────┴─────────────┐     ┌───────────────────────┐
-  │                 │     │                          │     │  NVIDIA Inference API  │
-  │  Next.js 16     │────▶│   Puzzle Generator (Go)  │────▶│  Llama 3.3 70B        │
-  │  React 19       │ REST│   Echo · Swagger · Redis  │     └───────────────────────┘
-  │  Tailwind 4     │     │                          │
-  └─────────────────┘     │                          │     ┌───────────────────────┐
-                          │                          │────▶│  HuggingFace Datasets │
-  ┌─────────────────┐     │                          │     │  Lichess/chess-puzzles │
-  │  Voice-to-Move  │◀───│                          │     │  (~4M real puzzles)    │
-  │  Python FastAPI  │     └──────────────────────────┘     └───────────────────────┘
-  └─────────────────┘              │
-                                   │
-                          ┌────────┴─────────────────┐
-                          │     Lichess API           │
-                          │  Daily · By ID · By Diff  │
-                          └──────────────────────────┘
+                                 ┌────────────────────────┐
+                                 │       API Gateway       │
+                                 │    (nginx – port 3100)  │
+                                 └────┬──────────┬────────┘
+                                      │          │
+                  ┌───────────────────┘          └───────────────────┐
+                  ▼                                                   ▼
+   ┌──────────────────────────┐                       ┌──────────────────────────┐
+   │  Puzzle Generator (Go)   │                       │  Voice-to-Move (Python)  │
+   │  Echo · Swagger · Redis  │                       │  FastAPI · STT · NLP     │
+   │  Port 8080               │                       │  Port 8001               │
+   └────────────┬─────────────┘                       └──────────────────────────┘
+                │
+   ┌────────────┴─────────────┐
+   │        Redis 8           │
+   │  Sessions · Daily Cache  │
+   │  Stats · LRU Eviction    │
+   └──────────────────────────┘
+                │
+   ┌────────────┼──────────────────────────┐
+   ▼            ▼                          ▼
+┌──────────┐ ┌───────────────────────┐ ┌──────────────────┐
+│ Lichess  │ │ HuggingFace Datasets  │ │ NVIDIA Inference  │
+│ API      │ │ (~4M+ puzzles)        │ │ Llama 3.3 70B     │
+└──────────┘ └───────────────────────┘ └──────────────────┘
+
+   ┌──────────────────────────┐
+   │     Next.js 16 Client    │
+   │  React 19 · Tailwind 4   │
+   │  Port 3000               │
+   └──────────────────────────┘
 ```
+
+## Puzzle Generator Diagram
+
+![Puzzle Generator Diagram](./puzzle-generator-app.excalidraw.png)
 
 ---
 
@@ -39,10 +71,10 @@ Fresh puzzles from **multiple sources** — Lichess API, a 4M+ puzzle dataset, a
 
 | Source | Endpoint | Description |
 |--------|----------|-------------|
-| **Lichess API** | `GET /puzzle?difficulty=` | Real-time puzzles from Lichess, filtered by difficulty |
-| **Lichess Daily** | `GET /puzzle/daily` | Puzzle of the day |
-| **HuggingFace Dataset** | `GET /puzzle/dataset?difficulty=` | Random puzzle from the 4M+ Lichess/chess-puzzles dataset |
-| **AI RAG** | `POST /puzzle/ai` | AI-selected puzzle using Retrieval-Augmented Generation (premium) |
+| **Lichess API** | `GET /api/v1/puzzle?difficulty=` | Real-time puzzles from Lichess, filtered by difficulty |
+| **Lichess Daily** | `GET /api/v1/puzzle/daily` | Puzzle of the day |
+| **HuggingFace Dataset** | `GET /api/v1/puzzle/dataset?difficulty=` | Random puzzle from the 4M+ Lichess/chess-puzzles dataset |
+| **AI RAG** | `POST /api/v1/puzzle/ai` | AI-selected puzzle using Retrieval-Augmented Generation (premium) |
 
 ---
 
@@ -60,7 +92,6 @@ User prompt: "a nice fork puzzle"
 │  Fetch 8 candidate puzzles from HuggingFace              │
 │  Dataset: Lichess/chess-puzzles (~4M puzzles)             │
 │  Filtered by requested difficulty (easy/medium/hard)      │
-│  API: HuggingFace datasets-server (rows endpoint)        │
 └──────────────────────────┬───────────────────────────────┘
                            │
                            ▼
@@ -81,10 +112,10 @@ User prompt: "a nice fork puzzle"
 
 ### Why RAG?
 
-- **100% valid puzzles** — every puzzle comes from the Lichess database, not AI hallucination
-- **Fast** — ~3s total (1.5s retrieval + 1.5s inference), no heavy generation
-- **Accurate** — the LLM only selects from pre-validated candidates, it doesn't generate positions
-- **Lightweight prompt** — only rating + themes are sent (no FEN/moves), keeping token usage minimal
+- **100% valid puzzles** — every puzzle comes from the Lichess database
+- **Fast** — ~3s total (1.5s retrieval + 1.5s inference)
+- **Accurate** — the LLM selects from pre-validated candidates
+- **Lightweight** — only rating + themes are sent, minimal token usage
 
 ### Model
 
@@ -95,60 +126,6 @@ User prompt: "a nice fork puzzle"
 | Parameters | 70B |
 | Temperature | 0.2 |
 | Max tokens | 128 |
-| Timeout | 30s |
-| API format | OpenAI-compatible (`/v1/chat/completions`) |
-
----
-
-## Redis — Session & Cache Layer
-
-Redis powers all stateful features. The service degrades gracefully if Redis is unavailable (puzzles still work, sessions don't).
-
-### What Redis Stores
-
-| Key Pattern | Data | TTL | Purpose |
-|-------------|------|-----|---------|
-| `session:{uuid}` | Full session state (FEN, moves, progress, hints, solved/failed) | 2 hours | Track puzzle-solving sessions |
-| `daily-puzzle` | Cached daily puzzle from Lichess | Configurable | Avoid hitting Lichess API repeatedly |
-| `stats:{metric}` | Integer counters | Permanent | Track usage statistics |
-
-### Why Redis?
-
-- **Speed** — sub-millisecond reads/writes for session updates during gameplay
-- **TTL** — sessions auto-expire after 2 hours, no cleanup needed
-- **Persistence** — AOF (Append Only File) enabled so data survives container restarts
-- **Memory-safe** — capped at 128MB with LRU eviction policy
-- **Optional** — the service prints `⚠ Redis unavailable — sessions disabled` and continues without it
-
-### Session Lifecycle
-
-```
-POST /session         → Create session (UUID, puzzle data, timestamps)
-GET  /session/:id     → Read session state
-PUT  /session/:id     → Update progress (move index, solved, failed, hints)
-DELETE /session/:id   → End session early
-                        Auto-expires after 2h via Redis TTL
-```
-
----
-
-## Services
-
-### puzzle-generator
-**Go 1.25 · Echo · Swagger · Redis**
-
-Smart puzzle orchestration service that fetches, filters, and serves puzzles from multiple sources. Handles session management, AI RAG pipeline, difficulty filtering, and duplicate avoidance.
-
-Key packages:
-- `pkg/nvidia` — NVIDIA Inference API client (OpenAI-compatible)
-- `pkg/huggingface` — HuggingFace datasets-server client with batch fetching
-- `pkg/lichess` — Lichess API client (daily, by-ID, by-difficulty)
-- `pkg/redis` — Redis client for sessions, caching, and stats
-- `internal/services` — RAG pipeline orchestration, prompt building, response parsing
-- `internal/middleware` — Request logging, premium access control
-
-### voice-to-move
-**Python · FastAPI** — Spoken moves → legal chess moves with AI
 
 ---
 
@@ -165,13 +142,11 @@ The voice system lets you play chess by speaking: say **"knight to f3"** and the
 │   Path A: Browser STT                Path B: Server STT      │
 │   ┌──────────────────────┐          ┌──────────────────────┐ │
 │   │ webkitSpeechRecognition│         │ MediaRecorder API    │ │
-│   │ (Chrome/Edge, needs   │         │ (records WebM audio) │ │
-│   │  internet + HTTPS)    │         │                      │ │
+│   │ (Chrome/Edge)         │         │ (records WebM audio) │ │
 │   └──────────┬───────────┘         └──────────┬───────────┘ │
 │              │ text                            │ audio blob   │
 │              ▼                                 ▼              │
 │   POST /voice/parse              POST /voice/move            │
-│   { "text": "knight f3" }        FormData: audio file        │
 └──────────────┬──────────────────────────────┬────────────────┘
                │                              │
                ▼                              ▼
@@ -179,13 +154,8 @@ The voice system lets you play chess by speaking: say **"knight to f3"** and the
 │              Voice-to-Move Service (FastAPI)                  │
 │                                                              │
 │  /voice/parse  ──→  move_parser.parse_transcript(text)       │
-│                                                              │
-│  /voice/move   ──→  pydub (convert to WAV)                   │
-│                 ──→  Google Speech Recognition (STT)          │
-│                 ──→  move_parser.parse_transcript(text)       │
-│                                                              │
+│  /voice/move   ──→  pydub → Google STT → parse_transcript   │
 │  /voice/ws     ──→  WebSocket real-time push-to-talk         │
-│                     (binary audio frames → JSON move result)  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -193,31 +163,32 @@ The voice system lets you play chess by speaking: say **"knight to f3"** and the
 
 | Path | When Used | How |
 |------|-----------|-----|
-| **Browser STT** (Path A) | Default on Chrome/Edge with internet | Uses `webkitSpeechRecognition` API for real-time transcription, sends final text to `/voice/parse` for move parsing |
-| **Server STT** (Path B) | Fallback when browser STT fails (no HTTPS, Firefox, offline) | Records audio via `MediaRecorder` API, uploads WebM blob to `/voice/move`, server transcribes with Google Speech API |
+| **Browser STT** (Path A) | Default on Chrome/Edge | Uses `webkitSpeechRecognition` for real-time transcription |
+| **Server STT** (Path B) | Fallback (Firefox, no HTTPS) | Records audio via `MediaRecorder`, uploads to server |
 
-The client auto-detects: it first tries browser STT, and if a `network` or `service-not-allowed` error occurs, it permanently switches to server-side for that session.
+The client auto-detects capability and switches automatically.
 
 ### Move Parser
 
-The core NLP engine (`move_parser.py`, ~360 lines) converts free-form English into chess notation using a **two-pass regex pipeline**:
+The NLP engine (`move_parser.py`) converts free-form English into chess notation using a **two-pass regex pipeline**:
 
 **Pass 1 — Normalization:**
+- Filler word removal: "um", "please", "play the" → stripped
 - Number words → digits: "four" → "4"
-- Piece synonyms: "horse" → "knight"
-- File names: NATO phonetic ("alpha" → "a"), common mis-hearings ("see" → "c")
-- Capture synonyms: "captures", "takes", "by" → "takes"
-- Castling variants: "castle king side", "short castle", "kingside castle" → "O-O"
+- Piece synonyms: "horse" / "night" / "tower" → standard names
+- NATO phonetic: "alpha" → "a", "echo" → "e"
+- Accent-friendly variants: "eh", "si", "tree", "ait"
 
 **Pass 2 — Pattern matching** (most specific → least specific):
-1. `{square} to {square}` → UCI (e.g. "e2 to e4" → `e2e4`)
-2. `{piece} {square} to {square}` → UCI + SAN (e.g. "rook a1 to a8" → `a1a8` / `Ra8`)
-3. `{piece} takes {square}` → SAN capture (e.g. "bishop takes d5" → `Bxd5`)
-4. `{file} takes {square}` → pawn capture (e.g. "a takes b4" → `axb4`)
-5. `{piece} {square}` → SAN (e.g. "knight f3" → `Nf3`)
-6. `{square}` alone → pawn move (e.g. "e4" → `e4`)
-7. Castling: "castle king/queen side" → `O-O` / `O-O-O`
-8. Promotion: "promote to queen" → appends `=Q`
+1. Castling: "castle king side", "short castle" → `O-O`
+2. `{square} to {square}` → UCI (e.g. "e2 to e4" → `e2e4`)
+3. `{piece} {square} to {square}` → UCI + SAN
+4. `{piece} takes {square}` → SAN capture
+5. `{file} takes {square}` → pawn capture
+6. `{piece} {square}` → SAN
+7. `{square}` alone → pawn move
+8. Promotion: "promote to queen" → `=Q`
+9. Check/Checkmate annotations
 
 ### Supported Voice Commands
 
@@ -228,7 +199,6 @@ The core NLP engine (`move_parser.py`, ~360 lines) converts free-form English in
 | "bishop takes d5" | Bxd5 | — |
 | "castle king side" | O-O | e1g1 |
 | "queen h5 check" | Qh5+ | — |
-| "pawn to e4" | e4 | — |
 | "rook a1 to a8" | Ra8 | a1a8 |
 | "a takes b4" | axb4 | — |
 | "promote to queen" | =Q | — |
@@ -238,26 +208,98 @@ The core NLP engine (`move_parser.py`, ~360 lines) converts free-form English in
 | Mode | Behavior |
 |------|----------|
 | **Push-to-talk** | Tap mic → speak → result. One move at a time. |
-| **Auto / Continuous** | Toggle auto mode on. Service listens continuously, auto-restarts after each move (900ms on success, 1500ms on error). |
+| **Auto / Continuous** | Auto-starts when puzzle begins, pauses on recognized move, reactivates for next move. |
 
-### API Endpoints
+### Accessibility
+
+- ARIA live regions announce move results to screen readers
+- Auto-listen mode enables hands-free play for visually impaired users
+- Keyboard navigable: all controls are focusable and operable
+- Voice examples provided as guidance text
+
+### Voice API Endpoints
 
 | Method | Endpoint | Input | Output |
 |--------|----------|-------|--------|
-| `POST` | `/api/v1/voice/transcribe` | Audio file (multipart) | `{ raw_transcript, confidence }` |
-| `POST` | `/api/v1/voice/move` | Audio file (multipart) | `{ raw_transcript, san, uci, promotion, confidence }` |
-| `POST` | `/api/v1/voice/parse` | `{ text }` (JSON) | `{ raw_transcript, san, uci, promotion, confidence }` |
-| `WS`   | `/api/v1/voice/ws` | Binary audio frames | JSON move result per turn |
+| `POST` | `/voice/v1/voice/transcribe` | Audio file (multipart) | `{ raw_transcript, confidence }` |
+| `POST` | `/voice/v1/voice/move` | Audio file (multipart) | `{ raw_transcript, san, uci, promotion, confidence }` |
+| `POST` | `/voice/v1/voice/parse` | `{ text }` (JSON) | `{ raw_transcript, san, uci, promotion, confidence }` |
+| `WS`   | `/voice/v1/voice/ws` | Binary audio frames | JSON move result per turn |
 
-### Tech Stack
+---
 
-| Component | Technology |
-|-----------|-----------|
-| Framework | FastAPI 0.115 · Python 3.14 |
-| Speech-to-Text | Google Speech Recognition (via `SpeechRecognition` library) |
-| Audio Conversion | pydub + ffmpeg (any format → 16kHz mono WAV) |
-| Move Parser | Custom regex NLP pipeline (~360 lines) |
-| Supported Formats | WAV, OGG, MP3, WEBM, FLAC, MP4 |
+## API Gateway
+
+All client requests flow through a single **nginx-based API gateway** (port 3100) that handles:
+
+- **Reverse proxy** routing to puzzle-generator and voice-to-move services
+- **CORS** headers (configured globally)
+- **WebSocket** upgrade for real-time voice streaming
+- **Health** endpoint at `/health`
+
+### Routes
+
+| Gateway Path | Target Service | Description |
+|-------------|----------------|-------------|
+| `/api/v1/*` | puzzle-generator:8080 | Puzzle, session, and health endpoints |
+| `/voice/v1/*` | voice-to-move:8001 | Voice transcription and parsing |
+| `/voice/v1/voice/ws` | voice-to-move:8001 | WebSocket voice stream |
+| `/swagger/*` | puzzle-generator:8080 | Swagger UI |
+| `/voice/docs` | voice-to-move:8001 | FastAPI docs |
+| `/health` | (gateway itself) | Gateway health check |
+
+### Future Services
+
+The gateway config includes placeholder blocks for:
+- **Game Service** — real-time chess games
+- **Chat Service** — player communication
+- **History Service** — game/puzzle history
+
+---
+
+## Redis — Session & Cache Layer
+
+Redis powers all stateful features. The service degrades gracefully if Redis is unavailable.
+
+### What Redis Stores
+
+| Key Pattern | Data | TTL | Purpose |
+|-------------|------|-----|---------|
+| `session:{uuid}` | Full session state | 2 hours | Track puzzle-solving sessions |
+| `daily-puzzle` | Cached daily puzzle | Configurable | Avoid repeated Lichess API calls |
+| `stats:{metric}` | Integer counters | Permanent | Track usage statistics |
+
+### Session Lifecycle
+
+```
+POST /session         → Create session (UUID, puzzle data)
+GET  /session/:id     → Read session state
+PUT  /session/:id     → Update progress
+DELETE /session/:id   → End session early
+                        Auto-expires after 2h via Redis TTL
+```
+
+---
+
+## Services
+
+### puzzle-generator
+**Go 1.25 · Echo · Swagger · Redis**
+
+Smart puzzle orchestration. Key packages:
+- `pkg/nvidia` — NVIDIA Inference API client
+- `pkg/huggingface` — HuggingFace datasets-server client
+- `pkg/lichess` — Lichess API client
+- `pkg/redis` — Redis client for sessions/caching
+- `internal/services` — RAG pipeline orchestration
+
+### voice-to-move
+**Python 3.14 · FastAPI · SpeechRecognition · pydub**
+
+Voice-to-chess-move pipeline with accent-aware NLP parsing, noise filtering, and dual STT support (browser + server).
+
+### api-gateway
+**nginx 1.27** — Reverse proxy gateway. Single entry point for all services.
 
 ---
 
@@ -265,11 +307,14 @@ The core NLP engine (`move_parser.py`, ~360 lines) converts free-form English in
 
 ### Prerequisites
 
-- Docker & Docker Compose
-- A Lichess API token (optional but recommended)
+- **Docker & Docker Compose** (required)
+- **Node.js 22+** (for local client dev)
+- **Go 1.25+** (for local puzzle-generator dev)
+- **Python 3.14+** (for local voice-to-move dev)
+- A Lichess API token (optional, for higher rate limits)
 - An NVIDIA API key (required for AI feature)
 
-### Setup
+### Quick Start (Docker)
 
 ```bash
 # Clone the repo
@@ -278,36 +323,119 @@ cd chess-puzzle-next-go
 
 # Copy and fill in your API keys
 cp services/puzzle-generator/.env.exemple services/puzzle-generator/.env
+# Edit .env and add your NVIDIA_API_KEY
 
-# Start everything
+# Start everything (Redis + Puzzle Generator + Voice + Gateway)
 make docker-up          # attached (see logs)
 make docker-up-detach   # or detached
+
+# Start the Next.js client (separate terminal)
+make client-dev
 ```
 
-### Environment Variables
+### Local Development (without Docker)
+
+```bash
+# 1. Puzzle Generator
+make build && make run
+
+# 2. Voice-to-Move
+make voice-install && make voice-dev
+
+# 3. Next.js Client
+cd client && npm install && npm run dev
+
+# Or run all three in parallel:
+make dev
+```
+
+### Verify Setup
+
+```bash
+make check-env          # Check required .env files exist
+curl localhost:8080/health    # Puzzle service
+curl localhost:8001/health    # Voice service
+curl localhost:3100/health    # API Gateway (Docker only)
+```
+
+---
+
+## Environment Variables
+
+### Puzzle Generator (`services/puzzle-generator/.env`)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `LICHESS_API_TOKEN` | No | — | Lichess API token for higher rate limits |
 | `NVIDIA_API_KEY` | Yes (for AI) | — | NVIDIA Inference API key |
-| `NVIDIA_MODEL` | No | `meta/llama-3.3-70b-instruct` | NVIDIA model to use |
-| `NVIDIA_TIMEOUT` | No | `30s` | NVIDIA API timeout |
-| `HUGGINGFACE_BASE_URL` | No | `https://datasets-server.huggingface.co` | HuggingFace datasets server |
+| `NVIDIA_MODEL` | No | `meta/llama-3.3-70b-instruct` | Model to use |
+| `NVIDIA_TIMEOUT` | No | `30s` | API timeout |
+| `HUGGINGFACE_BASE_URL` | No | `https://datasets-server.huggingface.co` | Datasets server |
 | `HUGGINGFACE_DATASET` | No | `Lichess/chess-puzzles` | Dataset name |
 | `REDIS_URL` | No | `redis://redis:6379` | Redis connection URL |
 
-### Makefile Commands
+### Client (`client/.env.local`)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NEXT_PUBLIC_API_URL` | No | `http://localhost:8080/api/v1` | Direct puzzle API URL |
+| `NEXT_PUBLIC_VOICE_URL` | No | `http://localhost:8001` | Direct voice API URL |
+| `NEXT_PUBLIC_GATEWAY_URL` | No | — | Gateway URL (overrides direct URLs) |
+
+### Docker Compose
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GATEWAY_PORT` | `3100` | Gateway exposed port |
+| `PUZZLE_GENERATOR_PORT` | `8080` | Puzzle service exposed port |
+| `VOICE_PORT` | `8001` | Voice service exposed port |
+| `REDIS_PORT` | `6379` | Redis exposed port |
+
+---
+
+## Makefile Commands
 
 ```bash
-make help              # Show all targets
-make docker-up         # Build and start (attached)
-make docker-up-detach  # Build and start (detached)
-make docker-down       # Stop containers
-make docker-logs       # Tail logs
-make redis-cli         # Open Redis CLI
-make build             # Build Go binary locally
-make test              # Run Go tests
-make swagger           # Generate Swagger docs
+# ─── Docker ────────────────────────────
+make docker-build        # Build all Docker images
+make docker-up           # Build and start (attached)
+make docker-up-detach    # Build and start (detached)
+make docker-down         # Stop containers
+make docker-logs         # Tail all logs
+make gateway-logs        # Tail API gateway logs
+make redis-cli           # Open Redis CLI
+
+# ─── Go (Puzzle Generator) ────────────
+make build               # Build Go binary locally
+make run                 # Run locally
+make test                # Run Go tests
+make vet                 # Run go vet
+make tidy                # Run go mod tidy
+make swagger             # Generate Swagger docs
+
+# ─── Python (Voice-to-Move) ───────────
+make voice-install       # Create venv + install deps
+make voice-dev           # Run with auto-reload
+make voice-run           # Run production
+make voice-pytest        # Run Python tests
+make voice-lint          # Lint with ruff
+make voice-fmt           # Format with ruff
+make voice-docs          # Print docs URL
+make voice-test          # Curl health endpoint
+
+# ─── Next.js (Client) ─────────────────
+make client-dev          # Start dev server
+make client-build        # Build for production
+make client-lint         # Lint
+make client-fmt          # Format with prettier
+
+# ─── Cross-cutting ────────────────────
+make lint                # Lint everything (Go + Python + JS)
+make fmt                 # Format everything (Python + JS)
+make build-all           # Build everything
+make test-all            # Test everything (Go + Python)
+make check-env           # Verify .env files exist
+make dev                 # Start all services locally in parallel
 ```
 
 ### API Documentation
@@ -325,5 +453,71 @@ Swagger UI is available at `http://localhost:8080/swagger/index.html` when the s
 | AI | NVIDIA Inference API, Llama 3.3 70B Instruct |
 | Data | HuggingFace Datasets Server, Lichess API |
 | Cache | Redis 8 (Alpine) with AOF persistence |
-| Infra | Docker Compose, multi-stage Go builds |
-| Voice | Python 3.14, FastAPI, SpeechRecognition, pydub, Custom regex NLP |
+| Voice | Python 3.14, FastAPI, SpeechRecognition, pydub, Custom NLP |
+| Gateway | nginx 1.27 (reverse proxy, CORS, WebSocket) |
+| Infra | Docker Compose, multi-stage builds |
+
+---
+
+## Project Structure
+
+```
+chess-puzzle-next/
+├── client/                      # Next.js frontend
+│   ├── app/                     # App Router pages
+│   │   ├── page.tsx             # Landing page
+│   │   ├── daily/               # Daily puzzle
+│   │   ├── pricing/             # Pricing page
+│   │   ├── puzzles/             # Puzzle sources (lichess, dataset, ai)
+│   │   └── voice-test/          # Voice Lab (standalone voice playground)
+│   ├── components/
+│   │   ├── board/               # ChessBoard, MoveHistory, PlayerIndicator
+│   │   ├── home/                # HeroSection, AnimatedBoard, FeatureCarousel
+│   │   ├── layout/              # Navbar
+│   │   ├── puzzle/              # PuzzleSolver, PuzzleControls, DifficultyPicker
+│   │   ├── ui/                  # Button, Card, Chip, Badge, Tooltip, Switch
+│   │   └── voice/               # VoiceButton (push-to-talk + auto-listen)
+│   └── lib/
+│       ├── api.ts               # Axios client (puzzle + session APIs)
+│       ├── store.ts             # Zustand store (game state, voice, sessions)
+│       ├── types.ts             # TypeScript interfaces
+│       └── utils.ts             # Helpers
+│
+├── services/
+│   ├── api-gateway/             # nginx reverse proxy
+│   │   ├── Dockerfile
+│   │   └── nginx.conf
+│   ├── puzzle-generator/        # Go puzzle service
+│   │   ├── Dockerfile
+│   │   ├── cmd/server/          # Entry point
+│   │   ├── internal/            # Handlers, services, middleware
+│   │   ├── pkg/                 # External clients (lichess, nvidia, redis)
+│   │   └── docs/                # Swagger
+│   └── voice-to-move/           # Python voice service
+│       ├── Dockerfile
+│       ├── app/
+│       │   ├── main.py          # FastAPI app
+│       │   ├── parser/          # Chess move NLP parser
+│       │   └── routers/         # HTTP/WS endpoints
+│       └── tests/               # pytest tests
+│
+├── docker-compose.yml           # Full stack orchestration
+├── Makefile                     # Dev commands
+└── README.md
+```
+
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch: `git checkout -b feature/my-feature`
+3. Run linting before committing: `make lint`
+4. Run tests: `make test-all`
+5. Commit your changes: `git commit -m 'Add my feature'`
+6. Push to the branch: `git push origin feature/my-feature`
+7. Open a Pull Request
+
+---
+
+**Built with passion for chess and clean code.**

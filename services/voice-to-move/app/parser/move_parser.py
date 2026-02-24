@@ -14,6 +14,8 @@ Supported phrases (examples):
     "knight b1 c3"      → UCI: b1c3,  SAN: Nc3
     "a takes b4"        → UCI: None,  SAN: axb4
     "promote to queen"  → appended =Q
+    "knight b to d2"    → SAN: Nbd2  (disambiguated)
+    "rook 1 to a5"      → SAN: R1a5  (rank disambiguation)
 
 The parser works in two passes:
   1. Normalise & clean the transcript (numbers → ranks, synonyms → standard).
@@ -52,10 +54,29 @@ _PIECE_WORDS: dict[str, str] = {
     "bishop": "B",
     "knight": "N",
     "horse": "N",  # common alias
+    "night": "N",  # accent/ASR variant
+    "nite": "N",
     "pawn": "",
+    # Accent-friendly aliases
+    "tower": "R",  # common in many languages
+    "castle": "R",  # careful: only as piece name, not "castling"
+    # ASR misheard variants
+    "note": "N",
+    "nice": "N",
+    "knife": "N",
+    "rock": "R",
+    "brook": "R",
+    "look": "R",
+    "bishup": "B",
+    "dish up": "B",
+    "kin": "K",
+    "keen": "K",
+    "clean": "Q",
+    "cream": "Q",
 }
 
 _FILE_WORDS: dict[str, str] = {
+    # NATO phonetic alphabet
     "alpha": "a",
     "alfa": "a",
     "bravo": "b",
@@ -65,38 +86,67 @@ _FILE_WORDS: dict[str, str] = {
     "foxtrot": "f",
     "golf": "g",
     "hotel": "h",
-    # common mis-hearings
+    # common mis-hearings & accent variants
     "ay": "a",
+    "eh": "a",
+    "hey": "a",
     "be": "b",
     "bee": "b",
+    "bea": "b",
     "see": "c",
     "sea": "c",
+    "cee": "c",
+    "si": "c",
     "dee": "d",
+    "de": "d",
     "he": "e",
     "ee": "e",
+    "yi": "e",
     "ef": "f",
     "eff": "f",
+    "f.": "f",
     "gee": "g",
+    "ji": "g",
+    "ge": "g",
     "age": "h",
     "aitch": "h",
+    "ach": "h",
+    "h.": "h",
+    "each": "h",
+    # More ASR variants
+    "aye": "a",
+    "bay": "b",
+    "day": "d",
+    "fee": "f",
+    "jay": "g",
+    "hay": "h",
 }
 
 _SPOKEN_NUMBERS: dict[str, str] = {
     "one": "1",
     "won": "1",
+    "wan": "1",
     "two": "2",
     "to": "",  # handled contextually — "to" is usually the separator
     "too": "2",
+    "tu": "2",
     "three": "3",
     "tree": "3",
+    "free": "3",
     "four": "4",
     "for": "4",
     "fore": "4",
+    "foe": "4",
     "five": "5",
+    "fife": "5",
     "six": "6",
+    "sicks": "6",
+    "sex": "6",
     "seven": "7",
+    "sev": "7",
     "eight": "8",
     "ate": "8",
+    "ait": "8",
 }
 
 _PROMOTION_WORDS: dict[str, str] = {
@@ -107,17 +157,25 @@ _PROMOTION_WORDS: dict[str, str] = {
     "horse": "n",
 }
 
-_CAPTURE_WORDS = {"takes", "captures", "take", "capture", "x"}
+_CAPTURE_WORDS = {"takes", "captures", "take", "capture", "x", "by", "grabs", "eats"}
 
 _CASTLING_KINGSIDE = {"castle kingside", "castle king side", "castles kingside",
                       "castles king side", "short castle", "king side castle",
                       "kingside castle", "o-o", "castling kingside",
-                      "castling king side", "short castling"}
+                      "castling king side", "short castling",
+                      "king side castling", "castle short",
+                      "small castle", "castling short",
+                      "casle kingside", "casle king side",  # typo-friendly
+                      "kassle kingside", "kassle king side"}
 
 _CASTLING_QUEENSIDE = {"castle queenside", "castle queen side", "castles queenside",
                        "castles queen side", "long castle", "queen side castle",
                        "queenside castle", "o-o-o", "castling queenside",
-                       "castling queen side", "long castling"}
+                       "castling queen side", "long castling",
+                       "queen side castling", "castle long",
+                       "big castle", "castling long",
+                       "casle queenside", "casle queen side",
+                       "kassle queenside", "kassle queen side"}
 
 
 # ---------------------------------------------------------------------------
@@ -125,12 +183,21 @@ _CASTLING_QUEENSIDE = {"castle queenside", "castle queen side", "castles queensi
 # ---------------------------------------------------------------------------
 
 def _normalise(text: str) -> str:
-    """Lower-case, strip punctuation, normalise spoken numbers."""
+    """Lower-case, strip punctuation, normalise spoken numbers and filler words."""
     text = text.lower().strip()
     # remove punctuation except hyphens
     text = re.sub(r"[^\w\s-]", "", text)
+    # remove common speech filler words & ASR artifacts
+    _FILLER_WORDS = {
+        "um", "uh", "ah", "er", "like", "please", "move", "play",
+        "the", "my", "a", "an", "go", "put", "place", "do",
+        "i", "want", "would", "make", "okay", "so", "then",
+    }
+    words = text.split()
+    words = [w for w in words if w not in _FILLER_WORDS]
+    text = " ".join(words)
     # collapse whitespace
-    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
     return text
 
 
@@ -220,9 +287,9 @@ def _try_castling(text: str) -> ParsedMove | None:
 def _try_square_to_square(text: str) -> ParsedMove | None:
     """Match: [piece] <sq1> [to|takes] <sq2> [promote queen]"""
     pattern = re.compile(
-        r"(?:(king|queen|rook|bishop|knight|horse|pawn)\s+)?"
+        r"(?:(king|queen|rook|bishop|knight|horse|night|nite|tower|pawn)\s+)?"
         r"([a-h][1-8])\s+"
-        r"(?:to\s+|takes?\s+|captures?\s+|x\s+)?"
+        r"(?:to\s+|takes?\s+|captures?\s+|x\s+|grabs?\s+|eats?\s+|by\s+)?"
         r"([a-h][1-8])"
         r"(?:\s+promote(?:s|d)?\s+(?:to\s+)?(queen|rook|bishop|knight|horse))?"
     )
@@ -250,11 +317,43 @@ def _try_square_to_square(text: str) -> ParsedMove | None:
     return ParsedMove(raw=text, san=san, uci=uci, promotion=promo_uci or None)
 
 
+def _try_piece_disambiguated(text: str) -> ParsedMove | None:
+    """Match disambiguated piece moves: 'knight b to d2' → Nbd2, 'rook 1 to a5' → R1a5"""
+    pattern = re.compile(
+        r"(king|queen|rook|bishop|knight|horse|night|nite|tower)\s+"
+        r"([a-h]|[1-8])\s+"
+        r"(?:to\s+|takes?\s+|captures?\s+|x\s+|grabs?\s+|eats?\s+|by\s+)?"
+        r"([a-h][1-8])"
+        r"(?:\s+promote(?:s|d)?\s+(?:to\s+)?(queen|rook|bishop|knight|horse))?"
+    )
+    m = pattern.search(text)
+    if not m:
+        return None
+
+    piece_word = m.group(1)
+    disambig = m.group(2)
+    sq_to = m.group(3)
+    promo_word = m.group(4)
+
+    piece = _PIECE_WORDS[piece_word]
+    if not piece:
+        return None  # pawn disambiguation handled elsewhere
+
+    capture = any(w in text[m.start():m.end()] for w in _CAPTURE_WORDS)
+    sep = "x" if capture else ""
+    promo = ""
+    if promo_word:
+        promo = "=" + _PROMOTION_WORDS[promo_word].upper()
+
+    san = f"{piece}{disambig}{sep}{sq_to}{promo}"
+    return ParsedMove(raw=text, san=san, uci=None, promotion=promo.lstrip("=").lower() or None)
+
+
 def _try_piece_to_square(text: str) -> ParsedMove | None:
     """Match: <piece> [takes] <sq>  e.g. 'knight to f3', 'bishop takes d5'"""
     pattern = re.compile(
-        r"(king|queen|rook|bishop|knight|horse)\s+"
-        r"(?:to\s+|takes?\s+|captures?\s+|x\s+)?"
+        r"(king|queen|rook|bishop|knight|horse|night|nite|tower|rock|brook|look|note|nice|knife|bishup|dish up|kin|keen|clean|cream)\s+"
+        r"(?:to\s+|takes?\s+|captures?\s+|x\s+|grabs?\s+|eats?\s+|by\s+)?"
         r"([a-h][1-8])"
         r"(?:\s+promote(?:s|d)?\s+(?:to\s+)?(queen|rook|bishop|knight|horse))?"
     )
@@ -266,7 +365,9 @@ def _try_piece_to_square(text: str) -> ParsedMove | None:
     sq_to = m.group(2)
     promo_word = m.group(3)
 
-    piece = _PIECE_WORDS[piece_word]
+    piece = _PIECE_WORDS.get(piece_word, "")
+    if piece is None:
+        return None
     capture = any(w in text[m.start():m.end()] for w in _CAPTURE_WORDS)
     sep = "x" if capture else ""
     promo = ""
@@ -298,7 +399,7 @@ def _try_pawn_move(text: str) -> ParsedMove | None:
 def _try_pawn_capture(text: str) -> ParsedMove | None:
     """Match: <file> takes <sq>  e.g. 'a takes b4', 'd takes e5'"""
     pattern = re.compile(
-        r"([a-h])\s+(?:takes?\s+|captures?\s+|x\s+)([a-h][1-8])"
+        r"([a-h])\s+(?:takes?\s+|captures?\s+|x\s+|grabs?\s+|eats?\s+|by\s+)([a-h][1-8])"
         r"(?:\s+promote(?:s|d)?\s+(?:to\s+)?(queen|rook|bishop|knight|horse))?"
     )
     m = pattern.search(text)
@@ -346,6 +447,7 @@ def parse_transcript(transcript: str) -> ParsedMove:
     for parser in (
         _try_castling,
         _try_square_to_square,
+        _try_piece_disambiguated,
         _try_piece_to_square,
         _try_pawn_capture,
         _try_pawn_move,

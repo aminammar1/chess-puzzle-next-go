@@ -5,16 +5,15 @@ Accepts an audio file upload (push-to-talk) or a WebSocket audio stream,
 transcribes speech using SpeechRecognition (Google free tier), parses the
 transcript into a chess move (SAN / UCI), and returns the result.
 
-Supported audio formats: WAV, OGG, MP3, WEBM, FLAC (converted via pydub/ffmpeg).
+Supported audio formats: WAV, OGG, MP3, WEBM, FLAC (converted via ffmpeg).
 """
 
-import io
 import json
 import tempfile
 import logging
+import subprocess
 
 import speech_recognition as sr
-from pydub import AudioSegment
 from fastapi import APIRouter, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel
 
@@ -24,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["voice"])
 
-# Supported MIME → pydub format mapping
+# Supported MIME → file extension mapping
 _MIME_TO_FORMAT: dict[str, str] = {
     "audio/wav": "wav",
     "audio/x-wav": "wav",
@@ -72,12 +71,35 @@ class ParseTextRequest(BaseModel):
 
 def _audio_to_wav_bytes(audio_bytes: bytes, source_format: str) -> bytes:
     """Convert any supported audio format to WAV PCM bytes in memory."""
-    segment = AudioSegment.from_file(io.BytesIO(audio_bytes), format=source_format)
-    # 16-bit mono 16 kHz – optimal for speech recognition
-    segment = segment.set_frame_rate(16000).set_channels(1).set_sample_width(2)
-    buf = io.BytesIO()
-    segment.export(buf, format="wav")
-    return buf.getvalue()
+    with tempfile.NamedTemporaryFile(suffix=f".{source_format}", delete=True) as src:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as dst:
+            src.write(audio_bytes)
+            src.flush()
+
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                src.name,
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-sample_fmt",
+                "s16",
+                dst.name,
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                stderr = (result.stderr or "").strip()
+                raise RuntimeError(stderr or "ffmpeg conversion failed")
+
+            dst.seek(0)
+            return dst.read()
 
 
 def _detect_format(content_type: str | None, filename: str | None) -> str:
@@ -94,10 +116,19 @@ def _detect_format(content_type: str | None, filename: str | None) -> str:
 def _transcribe_wav(wav_bytes: bytes) -> tuple[str, float | None]:
     """Run Google Speech Recognition on raw WAV bytes. Returns (transcript, confidence)."""
     recognizer = sr.Recognizer()
+    # Tune for noisy environments: adjust energy threshold and pause
+    recognizer.energy_threshold = 250
+    recognizer.dynamic_energy_threshold = True
+    recognizer.pause_threshold = 0.4  # shorter pause = more reactive
+    recognizer.phrase_threshold = 0.15
+    recognizer.non_speaking_duration = 0.2
+    recognizer.operation_timeout = 8  # max seconds to wait for Google API
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
         tmp.write(wav_bytes)
         tmp.flush()
         with sr.AudioFile(tmp.name) as source:
+            # Adjust for ambient noise with a short duration
+            recognizer.adjust_for_ambient_noise(source, duration=0.2)
             audio_data = recognizer.record(source)
 
     result = recognizer.recognize_google(audio_data, language="en-US", show_all=True)

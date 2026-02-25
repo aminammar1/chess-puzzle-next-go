@@ -102,6 +102,82 @@ def _audio_to_wav_bytes(audio_bytes: bytes, source_format: str) -> bytes:
             return dst.read()
 
 
+def _boost_wav_for_soft_speech(wav_bytes: bytes) -> bytes:
+    """
+    Boost and normalize already-converted WAV for very quiet voices.
+    Returns original bytes if enhancement fails.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as src:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as dst:
+            src.write(wav_bytes)
+            src.flush()
+
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                src.name,
+                "-af",
+                "highpass=f=120,lowpass=f=3800,volume=2.4",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-sample_fmt",
+                "s16",
+                dst.name,
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                logger.warning("Soft-speech boost skipped (ffmpeg): %s", (result.stderr or "").strip())
+                return wav_bytes
+
+            dst.seek(0)
+            return dst.read()
+
+
+def _normalize_wav_for_variable_volume(wav_bytes: bytes) -> bytes:
+    """
+    Normalize dynamics for users who alternate between very soft/loud speech.
+    Returns original bytes if enhancement fails.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as src:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as dst:
+            src.write(wav_bytes)
+            src.flush()
+
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                src.name,
+                "-af",
+                "highpass=f=120,lowpass=f=3800,acompressor=threshold=-24dB:ratio=3:attack=5:release=60,alimiter=limit=0.97",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-sample_fmt",
+                "s16",
+                dst.name,
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                logger.warning("Variable-volume normalize skipped (ffmpeg): %s", (result.stderr or "").strip())
+                return wav_bytes
+
+            dst.seek(0)
+            return dst.read()
+
+
 def _detect_format(content_type: str | None, filename: str | None) -> str:
     """Resolve the audio format from MIME type or file extension."""
     if content_type and content_type in _MIME_TO_FORMAT:
@@ -113,32 +189,68 @@ def _detect_format(content_type: str | None, filename: str | None) -> str:
     return "wav"
 
 
-def _transcribe_wav(wav_bytes: bytes) -> tuple[str, float | None]:
-    """Run Google Speech Recognition on raw WAV bytes. Returns (transcript, confidence)."""
+def _recognize_wav_pass(wav_bytes: bytes, *, extra_sensitive: bool = False) -> tuple[str, float | None]:
+    """Run one recognition pass with optional extra-sensitive settings."""
     recognizer = sr.Recognizer()
-    # Tune for noisy environments: adjust energy threshold and pause
-    recognizer.energy_threshold = 250
+    recognizer.energy_threshold = 120 if extra_sensitive else 180
     recognizer.dynamic_energy_threshold = True
-    recognizer.pause_threshold = 0.4  # shorter pause = more reactive
+    recognizer.dynamic_energy_adjustment_damping = 0.12
+    recognizer.dynamic_energy_ratio = 1.2
+    recognizer.pause_threshold = 0.45
     recognizer.phrase_threshold = 0.15
-    recognizer.non_speaking_duration = 0.2
+    recognizer.non_speaking_duration = 0.25
     recognizer.operation_timeout = 8  # max seconds to wait for Google API
+
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
         tmp.write(wav_bytes)
         tmp.flush()
         with sr.AudioFile(tmp.name) as source:
-            # Adjust for ambient noise with a short duration
-            recognizer.adjust_for_ambient_noise(source, duration=0.2)
+            recognizer.adjust_for_ambient_noise(source, duration=0.35 if extra_sensitive else 0.25)
             audio_data = recognizer.record(source)
 
     result = recognizer.recognize_google(audio_data, language="en-US", show_all=True)
-    if not result:
+    if not result or "alternative" not in result or not result["alternative"]:
         return "", None
 
     best = result["alternative"][0]
     transcript = best.get("transcript", "")
     confidence = best.get("confidence", None)
     return transcript, confidence
+
+
+def _transcribe_wav(wav_bytes: bytes) -> tuple[str, float | None]:
+    """Run speech recognition with adaptive fallbacks for quiet/variable voices."""
+    candidates: list[tuple[str, float | None]] = []
+
+    primary = _recognize_wav_pass(wav_bytes)
+    if primary[0]:
+        candidates.append(primary)
+
+    boosted_wav = _boost_wav_for_soft_speech(wav_bytes)
+    if boosted_wav != wav_bytes:
+        boosted = _recognize_wav_pass(boosted_wav, extra_sensitive=True)
+        if boosted[0]:
+            candidates.append(boosted)
+
+    normalized_wav = _normalize_wav_for_variable_volume(wav_bytes)
+    if normalized_wav != wav_bytes:
+        normalized = _recognize_wav_pass(normalized_wav, extra_sensitive=True)
+        if normalized[0]:
+            candidates.append(normalized)
+
+    if not candidates:
+        return "", None
+
+    def _score(item: tuple[str, float | None]) -> float:
+        text, conf = item
+        base = conf if conf is not None else 0.35
+        return base + min(len(text), 30) * 0.001
+
+    best = max(candidates, key=_score)
+    if len(candidates) > 1:
+        logger.info("Adaptive transcription selected best of %d candidates", len(candidates))
+
+    return best
 
 
 # ---------------------------------------------------------------------------

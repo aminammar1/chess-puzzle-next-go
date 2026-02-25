@@ -49,9 +49,10 @@ export default function MoveHistory() {
         <div className="space-y-0.5">
           {pairs.map((pair) => {
             const wPlayed = pair.white.idx < moveIndex;
-            const wCurrent = pair.white.idx === moveIndex;
             const bPlayed = pair.black ? pair.black.idx < moveIndex : false;
-            const bCurrent = pair.black ? pair.black.idx === moveIndex : false;
+            const currentPlayedIdx = Math.max(0, moveIndex - 1);
+            const wCurrent = pair.white.idx === currentPlayedIdx && wPlayed;
+            const bCurrent = pair.black ? pair.black.idx === currentPlayedIdx && bPlayed : false;
 
             return (
               <div key={pair.num} className="flex items-center text-[13px] font-mono gap-1">
@@ -62,29 +63,27 @@ export default function MoveHistory() {
 
                 {/* White move */}
                 <span
-                  className={`flex-1 text-center rounded px-2 py-1 transition-all duration-200 ${
-                    wCurrent
+                  className={`flex-1 text-center rounded px-2 py-1 transition-all duration-200 ${wCurrent
                       ? "bg-[var(--accent-gold)]/20 text-[var(--accent-gold)] font-bold ring-1 ring-[var(--accent-gold)]/40"
                       : wPlayed || solved
                         ? "text-[var(--text-primary)]"
                         : "text-white/15"
-                  }`}
+                    }`}
                 >
-                  {wPlayed || wCurrent || solved ? pair.white.san : "···"}
+                  {wPlayed || solved ? pair.white.san : "···"}
                 </span>
 
                 {/* Black move */}
                 {pair.black ? (
                   <span
-                    className={`flex-1 text-center rounded px-2 py-1 transition-all duration-200 ${
-                      bCurrent
+                    className={`flex-1 text-center rounded px-2 py-1 transition-all duration-200 ${bCurrent
                         ? "bg-[var(--accent-gold)]/20 text-[var(--accent-gold)] font-bold ring-1 ring-[var(--accent-gold)]/40"
                         : bPlayed || solved
                           ? "text-[var(--text-primary)]"
                           : "text-white/15"
-                    }`}
+                      }`}
                   >
-                    {bPlayed || bCurrent || solved ? pair.black.san : "···"}
+                    {bPlayed || solved ? pair.black.san : "···"}
                   </span>
                 ) : (
                   <span className="flex-1" />

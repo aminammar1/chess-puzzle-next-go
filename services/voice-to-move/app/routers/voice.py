@@ -2,7 +2,7 @@
 Voice router
 =============
 Accepts an audio file upload (push-to-talk) or a WebSocket audio stream,
-transcribes speech using SpeechRecognition (Google free tier), parses the
+transcribes speech using a configurable cloud STT provider, parses the
 transcript into a chess move (SAN / UCI), and returns the result.
 
 Supported audio formats: WAV, OGG, MP3, WEBM, FLAC (converted via ffmpeg).
@@ -13,11 +13,17 @@ import tempfile
 import logging
 import subprocess
 
-import speech_recognition as sr
-from fastapi import APIRouter, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect, status, Query
 from pydantic import BaseModel
 
 from app.parser.move_parser import parse_transcript, ParsedMove
+from app.services.stt import (
+    STTError,
+    get_default_provider,
+    get_enabled_providers,
+    transcribe_with_fallback,
+    transcribe_with_provider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +68,25 @@ class ParseTextRequest(BaseModel):
     """Plain text to parse into a chess move (no audio)."""
 
     text: str
+
+
+class STTBenchmarkItem(BaseModel):
+    provider: str
+    ok: bool
+    transcript: str | None = None
+    confidence: float | None = None
+    latency_ms: int | None = None
+    parsed_san: str | None = None
+    parsed_uci: str | None = None
+    error: str | None = None
+
+
+class STTBenchmarkResponse(BaseModel):
+    default_provider: str
+    best_provider: str | None = None
+    best_transcript: str | None = None
+    best_confidence: float | None = None
+    providers_tested: list[STTBenchmarkItem]
 
 
 # ---------------------------------------------------------------------------
@@ -189,68 +214,33 @@ def _detect_format(content_type: str | None, filename: str | None) -> str:
     return "wav"
 
 
-def _recognize_wav_pass(wav_bytes: bytes, *, extra_sensitive: bool = False) -> tuple[str, float | None]:
-    """Run one recognition pass with optional extra-sensitive settings."""
-    recognizer = sr.Recognizer()
-    recognizer.energy_threshold = 120 if extra_sensitive else 180
-    recognizer.dynamic_energy_threshold = True
-    recognizer.dynamic_energy_adjustment_damping = 0.12
-    recognizer.dynamic_energy_ratio = 1.2
-    recognizer.pause_threshold = 0.45
-    recognizer.phrase_threshold = 0.15
-    recognizer.non_speaking_duration = 0.25
-    recognizer.operation_timeout = 8  # max seconds to wait for Google API
-
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
-        tmp.write(wav_bytes)
-        tmp.flush()
-        with sr.AudioFile(tmp.name) as source:
-            recognizer.adjust_for_ambient_noise(source, duration=0.35 if extra_sensitive else 0.25)
-            audio_data = recognizer.record(source)
-
-    result = recognizer.recognize_google(audio_data, language="en-US", show_all=True)
-    if not result or "alternative" not in result or not result["alternative"]:
-        return "", None
-
-    best = result["alternative"][0]
-    transcript = best.get("transcript", "")
-    confidence = best.get("confidence", None)
-    return transcript, confidence
-
-
 def _transcribe_wav(wav_bytes: bytes) -> tuple[str, float | None]:
-    """Run speech recognition with adaptive fallbacks for quiet/variable voices."""
-    candidates: list[tuple[str, float | None]] = []
-
-    primary = _recognize_wav_pass(wav_bytes)
-    if primary[0]:
-        candidates.append(primary)
-
+    """Run cloud STT with fast-first behavior and selective enhancement fallback."""
     boosted_wav = _boost_wav_for_soft_speech(wav_bytes)
-    if boosted_wav != wav_bytes:
-        boosted = _recognize_wav_pass(boosted_wav, extra_sensitive=True)
-        if boosted[0]:
-            candidates.append(boosted)
-
     normalized_wav = _normalize_wav_for_variable_volume(wav_bytes)
-    if normalized_wav != wav_bytes:
-        normalized = _recognize_wav_pass(normalized_wav, extra_sensitive=True)
-        if normalized[0]:
-            candidates.append(normalized)
+    candidates = [wav_bytes]
+    if boosted_wav != wav_bytes:
+        candidates.append(boosted_wav)
+    if normalized_wav not in candidates:
+        candidates.append(normalized_wav)
 
-    if not candidates:
+    results: list[tuple[str, float | None]] = []
+    for index, candidate in enumerate(candidates):
+        result = transcribe_with_fallback(candidate)
+        if result.transcript:
+            item = (result.transcript, result.confidence)
+            results.append(item)
+            if index == 0:
+                # Fast path: keep latency low for common cases.
+                # If confidence is unavailable (provider doesn't return it), accept first hit.
+                # If confidence is strong enough, avoid extra enhancement passes.
+                if result.confidence is None or result.confidence >= 0.58:
+                    return item
+
+    if not results:
         return "", None
 
-    def _score(item: tuple[str, float | None]) -> float:
-        text, conf = item
-        base = conf if conf is not None else 0.35
-        return base + min(len(text), 30) * 0.001
-
-    best = max(candidates, key=_score)
-    if len(candidates) > 1:
-        logger.info("Adaptive transcription selected best of %d candidates", len(candidates))
-
-    return best
+    return max(results, key=lambda item: (item[1] if item[1] is not None else 0.45, len(item[0])))
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +256,7 @@ def _transcribe_wav(wav_bytes: bytes) -> tuple[str, float | None]:
 )
 async def transcribe_audio(
     audio: UploadFile = File(..., description="Audio file (WAV, OGG, MP3, WEBM, FLAC)"),
+    fast: bool = Query(False, description="Use low-latency single-pass STT for wake-word style commands"),
 ) -> TranscriptResponse:
     """Upload an audio clip → get the raw transcript."""
     audio_bytes = await audio.read()
@@ -284,7 +275,11 @@ async def transcribe_audio(
                             f"Could not decode audio. Ensure it is a valid {fmt.upper()} file.")
 
     try:
-        transcript, confidence = _transcribe_wav(wav_bytes)
+        if fast:
+            result = transcribe_with_fallback(wav_bytes)
+            transcript, confidence = result.transcript, result.confidence
+        else:
+            transcript, confidence = _transcribe_wav(wav_bytes)
         if not transcript:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                 "No speech detected. Try speaking more clearly.")
@@ -293,11 +288,8 @@ async def transcribe_audio(
             raw_transcript=transcript,
             confidence=round(confidence, 4) if confidence else None,
         )
-    except sr.UnknownValueError:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            "Could not understand the audio.")
-    except sr.RequestError as exc:
-        logger.error("Google Speech API error: %s", exc)
+    except STTError as exc:
+        logger.error("STT provider error: %s", exc)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY,
                             f"Speech recognition service unavailable: {exc}")
 
@@ -342,6 +334,89 @@ async def parse_text(body: ParseTextRequest) -> MoveResponse:
         uci=parsed.uci,
         promotion=parsed.promotion,
         confidence=parsed.confidence,
+    )
+
+
+@router.post(
+    "/voice/stt-benchmark",
+    response_model=STTBenchmarkResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Benchmark all configured STT providers on one audio clip",
+)
+async def benchmark_stt(
+    audio: UploadFile = File(..., description="Audio file (WAV, OGG, MP3, WEBM, FLAC)"),
+) -> STTBenchmarkResponse:
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Uploaded audio file is empty.")
+
+    fmt = _detect_format(audio.content_type, audio.filename)
+    try:
+        wav_bytes = _audio_to_wav_bytes(audio_bytes, fmt)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            f"Could not decode audio. Ensure it is a valid {fmt.upper()} file.") from exc
+
+    boosted_wav = _boost_wav_for_soft_speech(wav_bytes)
+    normalized_wav = _normalize_wav_for_variable_volume(wav_bytes)
+    variant = normalized_wav if normalized_wav != wav_bytes else boosted_wav
+
+    enabled = get_enabled_providers()
+    if not enabled:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "No STT provider configured. Set OPENAI_API_KEY, ASSEMBLYAI_API_KEY, or DEEPGRAM_API_KEY.",
+        )
+
+    items: list[STTBenchmarkItem] = []
+
+    def score_candidate(transcript: str, confidence: float | None, latency_ms: int | None) -> float:
+        parsed: ParsedMove = parse_transcript(transcript)
+        parse_bonus = 0.25 if (parsed.san or parsed.uci) else 0.0
+        confidence_base = confidence if confidence is not None else 0.45
+        latency_penalty = (latency_ms or 0) / 25000
+        return confidence_base + parse_bonus - latency_penalty
+
+    best_provider: str | None = None
+    best_transcript: str | None = None
+    best_confidence: float | None = None
+    best_score = -10.0
+
+    for provider in enabled:
+        try:
+            primary = transcribe_with_provider(wav_bytes, provider)
+            chosen = primary
+            if not primary.transcript and variant != wav_bytes:
+                alt = transcribe_with_provider(variant, provider)
+                chosen = alt if alt.transcript else primary
+
+            parsed = parse_transcript(chosen.transcript)
+            item = STTBenchmarkItem(
+                provider=provider,
+                ok=True,
+                transcript=chosen.transcript,
+                confidence=chosen.confidence,
+                latency_ms=chosen.latency_ms,
+                parsed_san=parsed.san,
+                parsed_uci=parsed.uci,
+            )
+            items.append(item)
+
+            current_score = score_candidate(chosen.transcript, chosen.confidence, chosen.latency_ms)
+            if current_score > best_score:
+                best_score = current_score
+                best_provider = provider
+                best_transcript = chosen.transcript
+                best_confidence = chosen.confidence
+        except Exception as exc:
+            items.append(STTBenchmarkItem(provider=provider, ok=False, error=str(exc)))
+
+    return STTBenchmarkResponse(
+        default_provider=get_default_provider(),
+        best_provider=best_provider,
+        best_transcript=best_transcript,
+        best_confidence=best_confidence,
+        providers_tested=items,
     )
 
 

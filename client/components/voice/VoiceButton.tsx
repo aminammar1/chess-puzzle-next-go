@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { usePathname } from "next/navigation";
 import { Chess } from "chess.js";
 import { Mic } from "lucide-react";
 import { usePuzzleStore } from "@/lib/store";
@@ -18,9 +19,8 @@ import { useVoiceModeCommands } from "@/hooks/useVoiceModeCommands";
  *           and listening resumes seamlessly. Designed for blind users.
  *   MANUAL — push-to-talk. Tap to start, recognition stops after one utterance.
  *
- * Two STT paths (transparent to the user):
- *   A) Browser SpeechRecognition (Chrome / Edge) — text → /voice-api/voice/parse
- *   B) MediaRecorder fallback — audio blob → /voice-api/voice/move
+ * STT path:
+ *   Server STT — MediaRecorder audio blob → /voice-api/voice/move
  *
  * Two visual variants:
  *   compact — inline row for puzzle solver (auto toggle + mic + feedback text)
@@ -37,6 +37,12 @@ export default function VoiceButton({
   autoListen = false,
   variant = "compact",
 }: VoiceButtonProps) {
+  const pathname = usePathname();
+  const voiceEnabled =
+    pathname === "/voice-test" ||
+    pathname === "/daily" ||
+    pathname.startsWith("/puzzles");
+
   const {
     voiceListening,
     setVoiceListening,
@@ -61,11 +67,8 @@ export default function VoiceButton({
   // ── Refs ──
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const wakeRecognitionRef = useRef<any>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const useFallbackRef = useRef(false);
   const recorderStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextRecorderResultRef = useRef(false);
   const wakeFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -79,6 +82,7 @@ export default function VoiceButton({
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const AUTO_TIMEOUT_MS = 30_000; // 30 seconds of silence → exit auto mode
   const RECORDER_WINDOW_MS = 5000;
+  const WAKE_WINDOW_MS = 1800;
 
   // Keep refs in sync
   useEffect(() => { autoModeRef.current = autoMode; }, [autoMode]);
@@ -351,93 +355,15 @@ export default function VoiceButton({
 
   /* ── Start listening ── */
   const startListening = useCallback(() => {
+    if (!voiceEnabled) {
+      setVoiceListening(false);
+      updateStatus("idle");
+      return;
+    }
     if (recognitionRef.current) return;
 
-    if (wakeRecognitionRef.current) {
-      wakeRecognitionRef.current.abort();
-      wakeRecognitionRef.current = null;
-    }
-
-    if (useFallbackRef.current) {
-      startMediaRecorder();
-      return;
-    }
-
-    const hasBrowserSTT = ("webkitSpeechRecognition" in window) || ("SpeechRecognition" in window);
-    if (!hasBrowserSTT) {
-      useFallbackRef.current = true;
-      startMediaRecorder();
-      return;
-    }
-
-    updateStatus("listening");
-    setMessage("");
-    setTranscript("");
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    const recognition = new SR();
-
-    // Auto mode → continuous (mic stays open). Manual → stops after one utterance.
-    recognition.continuous = autoModeRef.current;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-    recognition.maxAlternatives = 3;
-
-    recognition.onstart = () => {
-      setVoiceListening(true);
-      updateStatus("listening");
-    };
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onresult = (event: any) => {
-      const current = event.results[event.results.length - 1];
-      const text = current[0].transcript;
-      setTranscript(text);
-      setVoiceTranscript(text);
-      if (current.isFinal) {
-        processVoiceTextRef.current(text);
-      }
-    };
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onerror = (event: any) => {
-      if (event.error === "network" || event.error === "service-not-allowed") {
-        useFallbackRef.current = true;
-        recognition.abort();
-        recognitionRef.current = null;
-        startMediaRecorder();
-        return;
-      }
-      if (event.error === "no-speech" && autoModeRef.current) return;
-      if (event.error !== "aborted") {
-        updateStatus("error");
-        setMessage(event.error === "no-speech" ? "No speech detected" : `Error: ${event.error}`);
-        clearFeedback();
-      }
-    };
-
-    recognition.onend = () => {
-      recognitionRef.current = null;
-      if (autoModeRef.current && !solvedRef.current && !failedRef.current) {
-        // Auto mode: seamlessly restart after a tiny delay
-        setTimeout(() => {
-          if (autoModeRef.current && !solvedRef.current && !failedRef.current) {
-            startListeningAutoRef.current?.();
-          } else {
-            setVoiceListening(false);
-            updateStatus("idle");
-          }
-        }, 200);
-      } else {
-        setVoiceListening(false);
-        if (statusRef.current === "listening") updateStatus("idle");
-      }
-    };
-
-    recognitionRef.current = recognition;
-    recognition.start();
-  }, [setVoiceListening, setVoiceTranscript, clearFeedback, startMediaRecorder, updateStatus]);
+    startMediaRecorder();
+  }, [voiceEnabled, setVoiceListening, updateStatus, startMediaRecorder]);
 
   const startListeningAutoRef = useRef<(() => void) | null>(null);
   useEffect(() => { startListeningAutoRef.current = startListening; }, [startListening]);
@@ -470,14 +396,15 @@ export default function VoiceButton({
   }, [setVoiceListening, updateStatus]);
 
   const runWakeFallbackCycle = useCallback(async () => {
+    if (!voiceEnabled) return;
     if (wakeFallbackRunningRef.current) return;
-    if (!useFallbackRef.current) return;
     if (autoModeRef.current) return;
-    if (recognitionRef.current || wakeRecognitionRef.current) return;
+    if (recognitionRef.current) return;
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") return;
     if (solvedRef.current || failedRef.current) return;
 
     wakeFallbackRunningRef.current = true;
+    let commandHandled = false;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
@@ -495,19 +422,20 @@ export default function VoiceButton({
         recorder.start();
         setTimeout(() => {
           if (recorder.state === "recording") recorder.stop();
-        }, 2200);
+        }, WAKE_WINDOW_MS);
       });
 
       const blob = new Blob(chunks, { type: "audio/webm" });
       if (blob.size > 500) {
         const form = new FormData();
         form.append("audio", blob, "wake.webm");
-        const res = await fetch("/voice-api/voice/transcribe", { method: "POST", body: form });
+        const res = await fetch("/voice-api/voice/transcribe?fast=1", { method: "POST", body: form });
         if (res.ok) {
           const data = await res.json();
           const heard = (data.raw_transcript || "").trim();
           if (heard) {
             if (handleModeCommand(heard)) {
+              commandHandled = true;
               return;
             }
           }
@@ -519,69 +447,17 @@ export default function VoiceButton({
       wakeFallbackRunningRef.current = false;
     }
 
-    if (!autoModeRef.current && useFallbackRef.current && !solvedRef.current && !failedRef.current) {
+    if (!commandHandled && !autoModeRef.current && !solvedRef.current && !failedRef.current) {
       if (wakeFallbackTimerRef.current) clearTimeout(wakeFallbackTimerRef.current);
       wakeFallbackTimerRef.current = setTimeout(() => {
         runWakeFallbackCycle();
-      }, 350);
+      }, 250);
     }
-  }, []);
-
-  const startWakeCommandListener = useCallback(() => {
-    if (wakeRecognitionRef.current) return;
-    if (autoModeRef.current) return;
-    if (recognitionRef.current) return;
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") return;
-    if (useFallbackRef.current) return;
-    if (solvedRef.current || failedRef.current) return;
-
-    const hasBrowserSTT = ("webkitSpeechRecognition" in window) || ("SpeechRecognition" in window);
-    if (!hasBrowserSTT) return;
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    const wake = new SR();
-    wake.continuous = true;
-    wake.interimResults = false;
-    wake.lang = "en-US";
-    wake.maxAlternatives = 1;
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    wake.onresult = (event: any) => {
-      const current = event.results[event.results.length - 1];
-      if (!current?.isFinal) return;
-      const text = current[0]?.transcript || "";
-      handleModeCommand(text);
-    };
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    wake.onerror = (event: any) => {
-      if (["network", "service-not-allowed", "not-allowed", "audio-capture"].includes(event.error)) {
-        useFallbackRef.current = true;
-        wakeRecognitionRef.current = null;
-        runWakeFallbackCycle();
-        return;
-      }
-      if (event.error !== "aborted" && event.error !== "no-speech") {
-        wakeRecognitionRef.current = null;
-      }
-    };
-
-    wake.onend = () => {
-      wakeRecognitionRef.current = null;
-      if (!autoModeRef.current && !recognitionRef.current && !solvedRef.current && !failedRef.current) {
-        setTimeout(() => {
-          if (!wakeRecognitionRef.current) startWakeCommandListener();
-        }, 350);
-      }
-    };
-
-    wakeRecognitionRef.current = wake;
-    wake.start();
-  }, [runWakeFallbackCycle, handleModeCommand]);
+  }, [voiceEnabled, WAKE_WINDOW_MS, handleModeCommand]);
 
   /* ── Toggle auto mode ── */
   const toggleAutoMode = useCallback((on: boolean, reason: "manual" | "voice-stop" = "manual") => {
+    if (!voiceEnabled) return;
     setAutoMode(on);
     if (on) {
       speak("Auto listen on. Say your moves. Say stop to end. Silence for 30 seconds will exit.");
@@ -593,35 +469,44 @@ export default function VoiceButton({
       if (reason === "voice-stop") {
         applyStopFeedback();
       }
-      speak("Auto listen off.");
+      if (reason === "voice-stop") {
+        speak("Auto listen off.");
+      }
     }
-  }, [stopListening, resetInactivityTimer, clearInactivityTimer, applyStopFeedback]);
+  }, [voiceEnabled, stopListening, resetInactivityTimer, clearInactivityTimer, applyStopFeedback]);
 
   // Keep toggle ref in sync
   useEffect(() => { toggleAutoRef.current = toggleAutoMode; }, [toggleAutoMode]);
 
   useEffect(() => {
+    if (!voiceEnabled) {
+      if (wakeFallbackTimerRef.current) {
+        clearTimeout(wakeFallbackTimerRef.current);
+        wakeFallbackTimerRef.current = null;
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+        mediaRecorderRef.current.stop();
+      }
+      setVoiceListening(false);
+      return;
+    }
+
     if (!autoMode && !voiceListening && !disabled && status !== "processing") {
       const timer = setTimeout(() => {
-        if (useFallbackRef.current) runWakeFallbackCycle();
-        else startWakeCommandListener();
+        runWakeFallbackCycle();
       }, 250);
       return () => clearTimeout(timer);
     }
 
-    if (wakeRecognitionRef.current) {
-      wakeRecognitionRef.current.abort();
-      wakeRecognitionRef.current = null;
-    }
     if (wakeFallbackTimerRef.current) {
       clearTimeout(wakeFallbackTimerRef.current);
       wakeFallbackTimerRef.current = null;
     }
-  }, [autoMode, voiceListening, disabled, status, startWakeCommandListener, runWakeFallbackCycle]);
+  }, [voiceEnabled, autoMode, voiceListening, disabled, status, runWakeFallbackCycle, setVoiceListening]);
 
   /* ── Auto-start when puzzle is ready ── */
   useEffect(() => {
-    if (autoMode && puzzleReady && !recognitionRef.current && statusRef.current !== "processing") {
+    if (voiceEnabled && autoMode && puzzleReady && !recognitionRef.current && statusRef.current !== "processing") {
       const timer = setTimeout(() => {
         if (autoModeRef.current && puzzleReadyRef.current && !recognitionRef.current) {
           startListeningAutoRef.current?.();
@@ -629,7 +514,7 @@ export default function VoiceButton({
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [autoMode, puzzleReady, moveIndex]);
+  }, [voiceEnabled, autoMode, puzzleReady, moveIndex]);
 
   /* ── TTS: announce opponent moves ── */
   const prevMoveIndexRef = useRef(moveIndex);
@@ -665,10 +550,10 @@ export default function VoiceButton({
 
   /* ── Enable auto mode from prop ── */
   useEffect(() => {
-    if (autoListen && puzzle && !solved && !failed) {
+    if (voiceEnabled && autoListen && puzzle && !solved && !failed) {
       toggleAutoRef.current?.(true);
     }
-  }, [autoListen, puzzle, solved, failed]);
+  }, [voiceEnabled, autoListen, puzzle, solved, failed]);
 
   /* ── Announce puzzle start ── */
   useEffect(() => {
@@ -682,7 +567,6 @@ export default function VoiceButton({
   useEffect(() => {
     return () => {
       if (recognitionRef.current) recognitionRef.current.abort();
-      if (wakeRecognitionRef.current) wakeRecognitionRef.current.abort();
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") mediaRecorderRef.current.stop();
       if (wakeFallbackTimerRef.current) clearTimeout(wakeFallbackTimerRef.current);
       if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
@@ -706,10 +590,10 @@ export default function VoiceButton({
             </span>
             <button
               onClick={() => toggleAutoMode(!autoMode)}
-              disabled={solved || failed}
+              disabled={!voiceEnabled || solved || failed}
               className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-white/[0.06] transition-colors duration-200
                 ${autoMode ? "bg-emerald-600" : "bg-white/[0.08]"}
-                ${solved || failed ? "cursor-not-allowed opacity-40" : ""}
+                ${!voiceEnabled || solved || failed ? "cursor-not-allowed opacity-40" : ""}
               `}
               role="switch"
               aria-checked={autoMode}
@@ -743,12 +627,12 @@ export default function VoiceButton({
                 status === "listening" ? stopListening() : startListening();
               }
             }}
-            disabled={disabled}
+            disabled={!voiceEnabled || disabled}
             className={`
               group relative flex h-16 w-16 items-center justify-center rounded-full
               border border-white/[0.1] ring-[3px] ${sc.ring} ${sc.bg}
               transition-all duration-300 ease-out
-              ${disabled ? "cursor-not-allowed opacity-30" : "cursor-pointer hover:scale-105 active:scale-95"}
+              ${!voiceEnabled || disabled ? "cursor-not-allowed opacity-30" : "cursor-pointer hover:scale-105 active:scale-95"}
             `}
             aria-label={status === "listening" ? "Stop listening" : "Start listening"}
           >
@@ -823,13 +707,13 @@ export default function VoiceButton({
       {/* Auto mode toggle */}
       <button
         onClick={() => toggleAutoMode(!autoMode)}
-        disabled={solved || failed}
+        disabled={!voiceEnabled || solved || failed}
         title={autoMode ? "Disable auto-listen" : "Enable auto-listen for hands-free play"}
         aria-label={autoMode ? "Disable automatic voice listening" : "Enable automatic voice listening for blind and hands-free play"}
         className={`flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-[10px] font-bold uppercase tracking-wider transition-all duration-200 ${autoMode
           ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shadow-sm shadow-emerald-500/10"
           : "bg-white/[0.04] text-[var(--text-muted)] border border-transparent hover:bg-white/[0.06]"
-          } ${solved || failed ? "cursor-not-allowed opacity-30" : ""}`}
+          } ${!voiceEnabled || solved || failed ? "cursor-not-allowed opacity-30" : ""}`}
       >
         <Mic size={12} />
         <span>Auto</span>

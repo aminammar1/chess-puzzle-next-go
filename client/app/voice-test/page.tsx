@@ -55,11 +55,8 @@ export default function VoiceTestPage() {
   const [voiceError, setVoiceError] = useState("");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const wakeRecognitionRef = useRef<any>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const useFallbackRef = useRef(false);
   const recorderStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipNextRecorderResultRef = useRef(false);
   const wakeFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -73,6 +70,7 @@ export default function VoiceTestPage() {
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const AUTO_TIMEOUT_MS = 30_000; // 30 seconds of silence → exit auto mode
   const RECORDER_WINDOW_MS = 5000;
+  const WAKE_WINDOW_MS = 1800;
 
   useEffect(() => { autoModeRef.current = autoMode; }, [autoMode]);
 
@@ -528,80 +526,25 @@ export default function VoiceTestPage() {
   }, [game, applyMove, clearStatusTimeout, scheduleAutoRestart, handleModeCommand]);
 
   const startListening = useCallback(() => {
-    if (wakeRecognitionRef.current) {
-      wakeRecognitionRef.current.abort();
-      wakeRecognitionRef.current = null;
-    }
-
     setMicStatus("listening");
     setTranscript("");
     setParsedSan("");
     setVoiceError("");
 
-    if (useFallbackRef.current) {
-      startMediaRecorder();
-      return;
-    }
-
-    const hasBrowserSTT = ("webkitSpeechRecognition" in window) || ("SpeechRecognition" in window);
-    if (!hasBrowserSTT) {
-      useFallbackRef.current = true;
-      startMediaRecorder();
-      return;
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
-    recognition.continuous = autoModeRef.current;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-    recognition.maxAlternatives = 3;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onresult = (event: any) => {
-      const current = event.results[event.results.length - 1];
-      const text = current[0].transcript;
-      setTranscript(text);
-      if (current.isFinal) processVoiceText(text);
-    };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onerror = (event: any) => {
-      if (event.error === "network" || event.error === "service-not-allowed") {
-        useFallbackRef.current = true;
-        recognition.abort();
-        startMediaRecorder();
-        return;
-      }
-      if (event.error === "no-speech" && autoModeRef.current) return;
-      setMicStatus("error");
-      setVoiceError(event.error === "no-speech" ? "No speech detected" : `Mic error: ${event.error}`);
-    };
-    recognition.onend = () => {
-      recognitionRef.current = null;
-      if (autoModeRef.current) {
-        setTimeout(() => {
-          if (autoModeRef.current) startListeningRef.current?.();
-          else setMicStatus((prev) => (prev === "listening" ? "idle" : prev));
-        }, 200);
-      } else {
-        setMicStatus((prev) => (prev === "listening" ? "idle" : prev));
-      }
-    };
-    recognitionRef.current = recognition;
-    recognition.start();
-  }, [processVoiceText, startMediaRecorder, scheduleAutoRestart]);
+    startMediaRecorder();
+  }, [startMediaRecorder]);
 
   useEffect(() => { startListeningRef.current = startListening; }, [startListening]);
 
   const runWakeFallbackCycle = useCallback(async () => {
     if (wakeFallbackRunningRef.current) return;
-    if (!useFallbackRef.current) return;
     if (autoModeRef.current) return;
-    if (recognitionRef.current || wakeRecognitionRef.current) return;
+    if (recognitionRef.current) return;
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") return;
     if (isGameOver) return;
 
     wakeFallbackRunningRef.current = true;
+    let commandHandled = false;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
@@ -619,19 +562,20 @@ export default function VoiceTestPage() {
         recorder.start();
         setTimeout(() => {
           if (recorder.state === "recording") recorder.stop();
-        }, 2200);
+        }, WAKE_WINDOW_MS);
       });
 
       const blob = new Blob(chunks, { type: "audio/webm" });
       if (blob.size > 500) {
         const form = new FormData();
         form.append("audio", blob, "wake.webm");
-        const res = await fetch("/voice-api/voice/transcribe", { method: "POST", body: form });
+        const res = await fetch("/voice-api/voice/transcribe?fast=1", { method: "POST", body: form });
         if (res.ok) {
           const data = await res.json();
           const heard = (data.raw_transcript || "").trim();
           if (heard) {
             if (handleModeCommand(heard)) {
+              commandHandled = true;
               return;
             }
           }
@@ -643,66 +587,13 @@ export default function VoiceTestPage() {
       wakeFallbackRunningRef.current = false;
     }
 
-    if (!autoModeRef.current && useFallbackRef.current && !isGameOver) {
+    if (!commandHandled && !autoModeRef.current && !isGameOver) {
       if (wakeFallbackTimerRef.current) clearTimeout(wakeFallbackTimerRef.current);
       wakeFallbackTimerRef.current = setTimeout(() => {
         runWakeFallbackCycle();
-      }, 350);
+      }, 250);
     }
-  }, [isGameOver]);
-
-  const startWakeCommandListener = useCallback(() => {
-    if (wakeRecognitionRef.current) return;
-    if (autoModeRef.current) return;
-    if (recognitionRef.current) return;
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") return;
-    if (useFallbackRef.current) return;
-    if (isGameOver) return;
-
-    const hasBrowserSTT = ("webkitSpeechRecognition" in window) || ("SpeechRecognition" in window);
-    if (!hasBrowserSTT) return;
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    const wake = new SR();
-    wake.continuous = true;
-    wake.interimResults = false;
-    wake.lang = "en-US";
-    wake.maxAlternatives = 1;
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    wake.onresult = (event: any) => {
-      const current = event.results[event.results.length - 1];
-      if (!current?.isFinal) return;
-      const text = current[0]?.transcript || "";
-      handleModeCommand(text);
-    };
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    wake.onerror = (event: any) => {
-      if (["network", "service-not-allowed", "not-allowed", "audio-capture"].includes(event.error)) {
-        useFallbackRef.current = true;
-        wakeRecognitionRef.current = null;
-        runWakeFallbackCycle();
-        return;
-      }
-      if (event.error !== "aborted" && event.error !== "no-speech") {
-        wakeRecognitionRef.current = null;
-      }
-    };
-
-    wake.onend = () => {
-      wakeRecognitionRef.current = null;
-      if (!autoModeRef.current && !recognitionRef.current && !isGameOver) {
-        setTimeout(() => {
-          if (!wakeRecognitionRef.current) startWakeCommandListener();
-        }, 350);
-      }
-    };
-
-    wakeRecognitionRef.current = wake;
-    wake.start();
-  }, [isGameOver, runWakeFallbackCycle, handleModeCommand]);
+  }, [isGameOver, WAKE_WINDOW_MS]);
 
   const stopListening = useCallback((opts?: { preserveStatus?: boolean }) => {
     if (autoRestartTimerRef.current) { clearTimeout(autoRestartTimerRef.current); autoRestartTimerRef.current = null; }
@@ -735,7 +626,9 @@ export default function VoiceTestPage() {
       } else {
         applyStopFeedback();
       }
-      speak("Auto listen off.");
+      if (reason === "voice-stop") {
+        speak("Auto listen off.");
+      }
     }
   }, [resetInactivityTimer, clearInactivityTimer, stopListening, applyStopFeedback]);
 
@@ -745,26 +638,20 @@ export default function VoiceTestPage() {
   useEffect(() => {
     if (!autoMode && micStatus !== "processing" && !isGameOver) {
       const timer = setTimeout(() => {
-        if (useFallbackRef.current) runWakeFallbackCycle();
-        else startWakeCommandListener();
+        runWakeFallbackCycle();
       }, 250);
       return () => clearTimeout(timer);
     }
 
-    if (wakeRecognitionRef.current) {
-      wakeRecognitionRef.current.abort();
-      wakeRecognitionRef.current = null;
-    }
     if (wakeFallbackTimerRef.current) {
       clearTimeout(wakeFallbackTimerRef.current);
       wakeFallbackTimerRef.current = null;
     }
-  }, [autoMode, micStatus, isGameOver, startWakeCommandListener, runWakeFallbackCycle]);
+  }, [autoMode, micStatus, isGameOver, runWakeFallbackCycle]);
 
   useEffect(() => {
     return () => {
       if (recognitionRef.current) recognitionRef.current.stop();
-      if (wakeRecognitionRef.current) wakeRecognitionRef.current.stop();
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") mediaRecorderRef.current.stop();
       if (wakeFallbackTimerRef.current) clearTimeout(wakeFallbackTimerRef.current);
       if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current);

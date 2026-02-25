@@ -154,8 +154,9 @@ The voice system lets you play chess by speaking: say **"knight to f3"** and the
 │              Voice-to-Move Service (FastAPI)                  │
 │                                                              │
 │  /voice/parse  ──→  move_parser.parse_transcript(text)       │
-│  /voice/move   ──→  pydub → Google STT → parse_transcript   │
+│  /voice/move   ──→  ffmpeg → Cloud STT → parse_transcript   │
 │  /voice/ws     ──→  WebSocket real-time push-to-talk         │
+│  /voice/stt-benchmark ─→ compare OpenAI/AssemblyAI/Deepgram │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -294,7 +295,7 @@ Smart puzzle orchestration. Key packages:
 - `internal/services` — RAG pipeline orchestration
 
 ### voice-to-move
-**Python 3.14 · FastAPI · SpeechRecognition · pydub**
+**Python 3.14 · FastAPI · ffmpeg · OpenAI/AssemblyAI/Deepgram STT**
 
 Voice-to-chess-move pipeline with accent-aware NLP parsing, noise filtering, and dual STT support (browser + server).
 
@@ -382,6 +383,25 @@ curl localhost:3100/health    # API Gateway (Docker only)
 | `NEXT_PUBLIC_VOICE_URL` | No | `http://localhost:8001` | Direct voice API URL |
 | `NEXT_PUBLIC_GATEWAY_URL` | No | — | Gateway URL (overrides direct URLs) |
 
+### Voice-to-Move (`services/voice-to-move/.env`)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `STT_PROVIDER` | No | `deepgram` | Preferred server STT provider (`openai`, `assemblyai`, `deepgram`) |
+| `STT_TIMEOUT_SECONDS` | No | `30` | Timeout for STT HTTP calls |
+| `OPENAI_API_KEY` | Yes* | — | OpenAI API key for `/audio/transcriptions` |
+| `OPENAI_STT_MODEL` | No | `whisper-1` | OpenAI STT model |
+| `OPENAI_STT_PROMPT` | No | Chess prompt | Prompt to bias recognition toward chess terms |
+| `ASSEMBLYAI_API_KEY` | Yes* | — | AssemblyAI API key |
+| `ASSEMBLYAI_MODELS` | No | `universal-3-pro,universal-2` | Priority list of AssemblyAI speech models |
+| `ASSEMBLYAI_LANGUAGE` | No | `en_us` | AssemblyAI language code |
+| `DEEPGRAM_API_KEY` | Yes* | — | Deepgram API key |
+| `DEEPGRAM_MODEL` | No | `nova-3` | Deepgram model |
+| `DEEPGRAM_LANGUAGE` | No | `en` | Deepgram language |
+| `DEEPGRAM_KEYTERMS` | No | chess terms | Keyterm hints for chess vocabulary |
+
+\*At least one provider API key is required.
+
 ### Docker Compose
 
 | Variable | Default | Description |
@@ -453,7 +473,7 @@ Swagger UI is available at `http://localhost:8080/swagger/index.html` when the s
 | AI | NVIDIA Inference API, Llama 3.3 70B Instruct |
 | Data | HuggingFace Datasets Server, Lichess API |
 | Cache | Redis 8 (Alpine) with AOF persistence |
-| Voice | Python 3.14, FastAPI, SpeechRecognition, pydub, Custom NLP |
+| Voice | Python 3.14, FastAPI, OpenAI/AssemblyAI/Deepgram STT, Custom NLP |
 | Gateway | nginx 1.27 (reverse proxy, CORS, WebSocket) |
 | Infra | Docker Compose, multi-stage builds |
 

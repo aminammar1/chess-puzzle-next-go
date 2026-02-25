@@ -190,10 +190,21 @@ def _normalise(text: str) -> str:
     # remove common speech filler words & ASR artifacts
     _FILLER_WORDS = {
         "um", "uh", "ah", "er", "like", "please", "move", "play",
-        "the", "my", "a", "an", "go", "put", "place", "do",
+        "the", "my", "an", "go", "put", "place", "do",
         "i", "want", "would", "make", "okay", "so", "then",
     }
     words = text.split()
+    _TYPO_FIXES = {
+        "kngith": "knight",
+        "knigth": "knight",
+        "kngiht": "knight",
+        "knigt": "knight",
+        "nigth": "knight",
+        "ngith": "knight",
+        "kight": "knight",
+        "knightt": "knight",
+    }
+    words = [_TYPO_FIXES.get(w, w) for w in words]
     words = [w for w in words if w not in _FILLER_WORDS]
     text = " ".join(words)
     # collapse whitespace
@@ -289,7 +300,7 @@ def _try_square_to_square(text: str) -> ParsedMove | None:
     pattern = re.compile(
         r"(?:(king|queen|rook|bishop|knight|horse|night|nite|tower|pawn)\s+)?"
         r"([a-h][1-8])\s+"
-        r"(?:to\s+|takes?\s+|captures?\s+|x\s+|grabs?\s+|eats?\s+|by\s+)?"
+        r"(?:to\s+|on\s+|at\s+|into\s+|takes?\s+|captures?\s+|x\s+|grabs?\s+|eats?\s+|by\s+)?"
         r"([a-h][1-8])"
         r"(?:\s+promote(?:s|d)?\s+(?:to\s+)?(queen|rook|bishop|knight|horse))?"
     )
@@ -322,7 +333,7 @@ def _try_piece_disambiguated(text: str) -> ParsedMove | None:
     pattern = re.compile(
         r"(king|queen|rook|bishop|knight|horse|night|nite|tower)\s+"
         r"([a-h]|[1-8])\s+"
-        r"(?:to\s+|takes?\s+|captures?\s+|x\s+|grabs?\s+|eats?\s+|by\s+)?"
+        r"(?:to\s+|on\s+|at\s+|into\s+|takes?\s+|captures?\s+|x\s+|grabs?\s+|eats?\s+|by\s+)?"
         r"([a-h][1-8])"
         r"(?:\s+promote(?:s|d)?\s+(?:to\s+)?(queen|rook|bishop|knight|horse))?"
     )
@@ -353,7 +364,7 @@ def _try_piece_to_square(text: str) -> ParsedMove | None:
     """Match: <piece> [takes] <sq>  e.g. 'knight to f3', 'bishop takes d5'"""
     pattern = re.compile(
         r"(king|queen|rook|bishop|knight|horse|night|nite|tower|rock|brook|look|note|nice|knife|bishup|dish up|kin|keen|clean|cream)\s+"
-        r"(?:to\s+|takes?\s+|captures?\s+|x\s+|grabs?\s+|eats?\s+|by\s+)?"
+        r"(?:to\s+|on\s+|at\s+|into\s+|takes?\s+|captures?\s+|x\s+|grabs?\s+|eats?\s+|by\s+)?"
         r"([a-h][1-8])"
         r"(?:\s+promote(?:s|d)?\s+(?:to\s+)?(queen|rook|bishop|knight|horse))?"
     )
@@ -378,10 +389,25 @@ def _try_piece_to_square(text: str) -> ParsedMove | None:
     return ParsedMove(raw=text, san=san, uci=None, promotion=promo.lstrip("=").lower() or None)
 
 
+def _try_compact_piece_to_square(text: str) -> ParsedMove | None:
+        """
+        Match compact piece notation emitted by STT, e.g.:
+            "nb5", "n b5", "qc7", "k e2"
+        """
+        pattern = re.compile(r"\b([kqrbn])\s*([a-h][1-8])\b")
+        m = pattern.search(text)
+        if not m:
+                return None
+
+        piece_letter = m.group(1).upper()
+        sq_to = m.group(2)
+        return ParsedMove(raw=text, san=f"{piece_letter}{sq_to}", uci=None)
+
+
 def _try_pawn_move(text: str) -> ParsedMove | None:
     """Match: pawn [to] <sq> or just <sq>  e.g. 'pawn to e4', 'e4'"""
     pattern = re.compile(
-        r"(?:pawn\s+)?(?:to\s+)?([a-h][1-8])"
+        r"(?:pawn\s+)?(?:to\s+)?\b([a-h][1-8])\b"
         r"(?:\s+promote(?:s|d)?\s+(?:to\s+)?(queen|rook|bishop|knight|horse))?"
     )
     m = pattern.search(text)
@@ -449,6 +475,7 @@ def parse_transcript(transcript: str) -> ParsedMove:
         _try_square_to_square,
         _try_piece_disambiguated,
         _try_piece_to_square,
+        _try_compact_piece_to_square,
         _try_pawn_capture,
         _try_pawn_move,
     ):

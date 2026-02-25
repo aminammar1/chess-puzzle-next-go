@@ -94,6 +94,8 @@ services:
     restart: unless-stopped
     ports:
       - "${VOICE_PORT:-8001}:8001"
+    env_file:
+      - ./services/voice-to-move/.env
     environment:
       PYTHONUNBUFFERED: "1"
     networks:

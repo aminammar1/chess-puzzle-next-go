@@ -86,6 +86,7 @@ jobs:
 
       - name: Deploy manifests with image tag
         run: |
+          kubectl delete svc api-gateway -n dev --ignore-not-found=true
           cd infra/k8s/overlays/dev
           kustomize edit set image ghcr.io/aminammar1/chess-puzzle-next-go/client=ghcr.io/aminammar1/chess-puzzle-next-go/client:${{ github.event.inputs.image_tag }}
           kustomize edit set image ghcr.io/aminammar1/chess-puzzle-next-go/api-gateway=ghcr.io/aminammar1/chess-puzzle-next-go/api-gateway:${{ github.event.inputs.image_tag }}

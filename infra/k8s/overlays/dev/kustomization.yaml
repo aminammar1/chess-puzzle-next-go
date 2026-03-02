@@ -5,7 +5,6 @@ namespace: dev
 
 resources:
   - ../../base
-  - ingress.yaml
 
 images:
   - name: ghcr.io/aminammar1/chess-puzzle-next-go/client

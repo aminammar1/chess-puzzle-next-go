@@ -25,7 +25,7 @@ For `.github/workflows/infra-dev.yml` (Terraform API Gateway), only `EKS_CLUSTER
 
 Recommended environment variable:
 
-- `DEV_API_BACKEND_URL`: public ingress DNS URL used by Terraform for API Gateway integration.
+- `DEV_API_BACKEND_URL`: public `api-gateway` LoadBalancer DNS URL used by Terraform for API Gateway integration.
 
 If you already have an EKS cluster (for example `eks-chess-app`), you can deploy workloads first with `.github/workflows/deploy-dev-eks.yml`, then read the ingress hostname and set `DEV_API_BACKEND_URL`.
 
@@ -44,7 +44,7 @@ Default deployment tag is `dev-latest`.
 
 1. Run image publish workflow `.github/workflows/build-push-ghcr.yml`.
 2. Run deployment workflow `.github/workflows/deploy-dev-eks.yml` (default cluster name is `eks-chess-app`).
-3. Get ingress hostname (`kubectl get ingress chess-puzzle-dev -n dev -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'`) and set `DEV_API_BACKEND_URL` to `http://<hostname>`.
+3. Get `api-gateway` service hostname (`kubectl get svc api-gateway -n dev -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'`) and set `DEV_API_BACKEND_URL` to `http://<hostname>`.
 4. Run Terraform workflow `.github/workflows/infra-dev.yml` with `action=apply` to wire AWS API Gateway to that backend URL.
 
 Note: Terraform no longer creates EKS resources in this repository.
@@ -59,11 +59,7 @@ Deployed in namespace `dev`:
 - `voice-to-move` (FastAPI)
 - `redis`
 
-Ingress (`infra/k8s/overlays/dev/ingress.yaml`) exposes:
-
-- `/` -> `client`
-- `/api` -> `api-gateway`
-- `/voice` -> `api-gateway`
+EKS Auto Mode exposes `api-gateway` via a `LoadBalancer` service.
 
 ## Optional Runtime Secrets for Services
 

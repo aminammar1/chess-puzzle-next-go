@@ -100,5 +100,8 @@ jobs:
           kubectl rollout status deployment/puzzle-generator -n dev --timeout=300s
           kubectl rollout status deployment/voice-to-move -n dev --timeout=300s
 
-      - name: Print ingress details
-        run: kubectl get ingress -n dev
+      - name: Print public gateway service details
+        run: |
+          kubectl get svc api-gateway -n dev
+          echo "DEV_API_BACKEND_URL should be:"
+          echo "http://$(kubectl get svc api-gateway -n dev -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"

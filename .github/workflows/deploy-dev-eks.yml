@@ -103,5 +103,6 @@ jobs:
       - name: Print public gateway service details
         run: |
           kubectl get svc api-gateway -n dev
+          kubectl describe svc api-gateway -n dev
           echo "DEV_API_BACKEND_URL should be:"
           echo "http://$(kubectl get svc api-gateway -n dev -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"

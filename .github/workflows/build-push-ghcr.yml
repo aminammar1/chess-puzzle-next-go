@@ -16,6 +16,7 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         service:
           - name: client

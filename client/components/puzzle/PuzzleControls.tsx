@@ -1,36 +1,27 @@
 "use client";
 
-import { usePuzzleStore } from "@/lib/store";
-import type { DifficultyLevel, PuzzleSource } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
 import Button from "@/components/ui/Button";
 import Card, { CardHeader, CardTitle } from "@/components/ui/Card";
+import { usePuzzleControlsController } from "@/hooks/usePuzzleControlsController";
 
 export default function PuzzleControls() {
-  const { loading, solved, failed, resetPuzzle, loadPuzzle, getHint } =
-    usePuzzleStore();
-  const [aiPrompt, setAiPrompt] = useState("");
-  const [selectedDifficulty, setSelectedDifficulty] =
-    useState<DifficultyLevel>("medium");
-  const [showAiInput, setShowAiInput] = useState(false);
-
-  const difficulties: DifficultyLevel[] = ["easy", "medium", "hard"];
-
-  function handleLoadPuzzle(source: PuzzleSource) {
-    if (source === "ai") {
-      setShowAiInput(true);
-      return;
-    }
-    loadPuzzle(source, selectedDifficulty);
-  }
-
-  function handleAiGenerate() {
-    const prompt = aiPrompt.trim() || "Create a tactical chess puzzle";
-    loadPuzzle("ai", selectedDifficulty, prompt);
-    setShowAiInput(false);
-    setAiPrompt("");
-  }
+  const {
+    loading,
+    solved,
+    failed,
+    resetPuzzle,
+    getHint,
+    aiPrompt,
+    setAiPrompt,
+    selectedDifficulty,
+    setSelectedDifficulty,
+    showAiInput,
+    setShowAiInput,
+    difficulties,
+    handleLoadPuzzle,
+    handleAiGenerate,
+  } = usePuzzleControlsController();
 
   return (
     <div className="space-y-3">

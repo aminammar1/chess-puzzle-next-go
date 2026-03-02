@@ -1,24 +1,20 @@
 "use client";
 
-import { useState } from "react";
 import Navbar from "@/components/layout/Navbar";
 import DifficultyPicker from "@/components/puzzle/DifficultyPicker";
 import PuzzleSolver from "@/components/puzzle/PuzzleSolver";
-import { usePuzzleStore } from "@/lib/store";
-import type { DifficultyLevel } from "@/lib/types";
+import { usePuzzleSourcePage } from "@/hooks/usePuzzleSourcePage";
 
 export default function DatasetPuzzlePage() {
-  const { puzzle, loading, error, loadPuzzle } = usePuzzleStore();
-  const [started, setStarted] = useState(false);
-
-  async function handleSelectDifficulty(difficulty: DifficultyLevel) {
-    await loadPuzzle("dataset", difficulty);
-    setStarted(true);
-  }
-
-  async function handleNextPuzzle(difficulty: DifficultyLevel) {
-    await loadPuzzle("dataset", difficulty);
-  }
+  const {
+    puzzle,
+    loading,
+    error,
+    started,
+    setStarted,
+    handleSelectDifficulty,
+    handleNextPuzzle,
+  } = usePuzzleSourcePage("dataset");
 
   return (
     <div className="min-h-screen bg-[var(--bg-deep)]">

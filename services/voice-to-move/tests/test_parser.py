@@ -73,6 +73,22 @@ class TestPieceToSquare:
         r = parse_transcript("king to e1")
         assert r.san == "Ke1"
 
+    def test_rock_to_a8_alias(self):
+        r = parse_transcript("rock to a8")
+        assert r.san == "Ra8"
+
+    def test_knight_takes_bishop_d5(self):
+        r = parse_transcript("knight takes bishop d5")
+        assert r.san == "Nxd5"
+
+    def test_take_d5_with_knight(self):
+        r = parse_transcript("take d5 with knight")
+        assert r.san == "Nxd5"
+
+    def test_capture_bishop_on_e6_with_rook(self):
+        r = parse_transcript("capture bishop on e6 with rook")
+        assert r.san == "Rxe6"
+
 
 # ---------------------------------------------------------------------------
 # Castling

@@ -177,6 +177,11 @@ _CASTLING_QUEENSIDE = {"castle queenside", "castle queen side", "castles queensi
                        "casle queenside", "casle queen side",
                        "kassle queenside", "kassle queen side"}
 
+_PIECE_CAPTURE_PATTERN = (
+    r"king|queen|rook|bishop|knight|horse|night|nite|tower|"
+    r"rock|brook|look|note|nice|knife|bishup|dish\s+up|kin|keen|clean|cream"
+)
+
 
 # ---------------------------------------------------------------------------
 # Normalisation
@@ -298,7 +303,7 @@ def _try_castling(text: str) -> ParsedMove | None:
 def _try_square_to_square(text: str) -> ParsedMove | None:
     """Match: [piece] <sq1> [to|takes] <sq2> [promote queen]"""
     pattern = re.compile(
-        r"(?:(king|queen|rook|bishop|knight|horse|night|nite|tower|pawn)\s+)?"
+        r"(?:(king|queen|rook|bishop|knight|horse|night|nite|tower|rock|brook|look|note|nice|knife|bishup|dish\s+up|kin|keen|clean|cream|pawn)\s+)?"
         r"([a-h][1-8])\s+"
         r"(?:to\s+|on\s+|at\s+|into\s+|takes?\s+|captures?\s+|x\s+|grabs?\s+|eats?\s+|by\s+)?"
         r"([a-h][1-8])"
@@ -331,7 +336,7 @@ def _try_square_to_square(text: str) -> ParsedMove | None:
 def _try_piece_disambiguated(text: str) -> ParsedMove | None:
     """Match disambiguated piece moves: 'knight b to d2' → Nbd2, 'rook 1 to a5' → R1a5"""
     pattern = re.compile(
-        r"(king|queen|rook|bishop|knight|horse|night|nite|tower)\s+"
+        r"(king|queen|rook|bishop|knight|horse|night|nite|tower|rock|brook|look|note|nice|knife|bishup|dish\s+up|kin|keen|clean|cream)\s+"
         r"([a-h]|[1-8])\s+"
         r"(?:to\s+|on\s+|at\s+|into\s+|takes?\s+|captures?\s+|x\s+|grabs?\s+|eats?\s+|by\s+)?"
         r"([a-h][1-8])"
@@ -363,8 +368,10 @@ def _try_piece_disambiguated(text: str) -> ParsedMove | None:
 def _try_piece_to_square(text: str) -> ParsedMove | None:
     """Match: <piece> [takes] <sq>  e.g. 'knight to f3', 'bishop takes d5'"""
     pattern = re.compile(
-        r"(king|queen|rook|bishop|knight|horse|night|nite|tower|rock|brook|look|note|nice|knife|bishup|dish up|kin|keen|clean|cream)\s+"
+        rf"({_PIECE_CAPTURE_PATTERN})\s+"
         r"(?:to\s+|on\s+|at\s+|into\s+|takes?\s+|captures?\s+|x\s+|grabs?\s+|eats?\s+|by\s+)?"
+        rf"(?:(?:the\s+)?(?:{_PIECE_CAPTURE_PATTERN}|pawn)\s+)?"
+        r"(?:on\s+|at\s+)?"
         r"([a-h][1-8])"
         r"(?:\s+promote(?:s|d)?\s+(?:to\s+)?(queen|rook|bishop|knight|horse))?"
     )
@@ -402,6 +409,32 @@ def _try_compact_piece_to_square(text: str) -> ParsedMove | None:
         piece_letter = m.group(1).upper()
         sq_to = m.group(2)
         return ParsedMove(raw=text, san=f"{piece_letter}{sq_to}", uci=None)
+
+
+def _try_take_with_piece(text: str) -> ParsedMove | None:
+    """
+    Match capture-first phrasing where the moving piece is spoken at the end, e.g.:
+        "take d5 with knight" -> Nxd5
+        "capture bishop on e6 with rook" -> Rxe6
+    """
+    pattern = re.compile(
+        rf"(?:take|takes|capture|captures|x|grab|grabs|eat|eats)\s+"
+        rf"(?:(?:the\s+)?(?:{_PIECE_CAPTURE_PATTERN}|pawn)\s+)?"
+        r"(?:on\s+|at\s+)?"
+        r"([a-h][1-8])\s+"
+        rf"(?:with\s+)?({_PIECE_CAPTURE_PATTERN})"
+    )
+    m = pattern.search(text)
+    if not m:
+        return None
+
+    sq_to = m.group(1)
+    piece_word = m.group(2)
+    piece = _PIECE_WORDS.get(piece_word)
+    if not piece:
+        return None
+
+    return ParsedMove(raw=text, san=f"{piece}x{sq_to}", uci=None)
 
 
 def _try_pawn_move(text: str) -> ParsedMove | None:
@@ -474,6 +507,7 @@ def parse_transcript(transcript: str) -> ParsedMove:
         _try_castling,
         _try_square_to_square,
         _try_piece_disambiguated,
+        _try_take_with_piece,
         _try_piece_to_square,
         _try_compact_piece_to_square,
         _try_pawn_capture,

@@ -2,49 +2,23 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { useTheme, type ThemeMode } from "@/lib/theme";
-
-/* ───────── Config ───────── */
-const navItems = [
-  { href: "/", label: "Home", icon: "♚" },
-  { href: "/puzzles", label: "Puzzles", icon: "♞" },
-  { href: "/daily", label: "Daily", icon: "♜" },
-  { href: "/voice-test", label: "Voice Lab", icon: "🎤" },
-  { href: "/pricing", label: "Pro", icon: "♛" },
-];
-
-const themeOptions: { mode: ThemeMode; label: string; icon: string }[] = [
-  { mode: "wood", label: "Classic Wood", icon: "🪵" },
-  { mode: "dark", label: "Dark Steel", icon: "🌑" },
-  { mode: "midnight", label: "Midnight", icon: "🌙" },
-  { mode: "emerald", label: "Emerald", icon: "💎" },
-];
+import { useTheme } from "@/lib/theme";
+import { navItems, themeOptions } from "@/lib/navbar-config";
+import { useNavbarController } from "@/hooks/useNavbarController";
 
 export default function Navbar() {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
-  const [showThemeMenu, setShowThemeMenu] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  const isActive = (href: string) =>
-    href === "/" ? pathname === "/" : pathname.startsWith(href);
-
-  /* Close popovers on outside click */
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node))
-        setShowThemeMenu(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  /* Close mobile menu on route change */
-  useEffect(() => setMobileOpen(false), [pathname]);
+  const {
+    showThemeMenu,
+    setShowThemeMenu,
+    mobileOpen,
+    setMobileOpen,
+    menuRef,
+    isActive,
+  } = useNavbarController(pathname);
 
   return (
     <nav className="sticky top-0 z-50 nav-glass">

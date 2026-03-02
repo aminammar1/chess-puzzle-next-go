@@ -1,38 +1,29 @@
 "use client";
 
-import { useState } from "react";
 import Navbar from "@/components/layout/Navbar";
 import PuzzleSolver from "@/components/puzzle/PuzzleSolver";
 import SubscriptionGate from "@/components/ui/SubscriptionGate";
 import Button from "@/components/ui/Button";
-import { usePuzzleStore } from "@/lib/store";
 import { useSubscription } from "@/lib/subscription";
-import type { DifficultyLevel } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
-const difficulties: { level: DifficultyLevel; label: string; color: string; active: string }[] = [
-  { level: "easy", label: "Easy", color: "text-green-400", active: "border-green-600/50 bg-green-900/20 text-green-400" },
-  { level: "medium", label: "Medium", color: "text-yellow-400", active: "border-yellow-600/50 bg-yellow-900/20 text-yellow-400" },
-  { level: "hard", label: "Hard", color: "text-red-400", active: "border-red-600/50 bg-red-900/20 text-red-400" },
-];
+import { useAIPuzzlePage } from "@/hooks/useAIPuzzlePage";
+import { AI_DIFFICULTIES } from "@/lib/puzzle-modes";
 
 export default function AIPuzzlePage() {
-  const { puzzle, loading, error, loadPuzzle } = usePuzzleStore();
+  const {
+    puzzle,
+    loading,
+    error,
+    started,
+    setStarted,
+    selectedDifficulty,
+    setSelectedDifficulty,
+    prompt,
+    setPrompt,
+    handleGenerate,
+    handleNextPuzzle,
+  } = useAIPuzzlePage();
   const { hasAIAccess } = useSubscription();
-  const [started, setStarted] = useState(false);
-  const [selectedDifficulty, setSelectedDifficulty] = useState<DifficultyLevel>("medium");
-  const [prompt, setPrompt] = useState("");
-
-  async function handleGenerate() {
-    const aiPrompt = prompt.trim() || "Create a tactical chess puzzle";
-    await loadPuzzle("ai", selectedDifficulty, aiPrompt);
-    setStarted(true);
-  }
-
-  async function handleNextPuzzle(difficulty: DifficultyLevel) {
-    const aiPrompt = prompt.trim() || "Create a tactical chess puzzle";
-    await loadPuzzle("ai", difficulty, aiPrompt);
-  }
 
   return (
     <div className="min-h-screen bg-[var(--bg-deep)]">
@@ -80,7 +71,7 @@ export default function AIPuzzlePage() {
                   Difficulty
                 </p>
                 <div className="mb-5 flex gap-2">
-                  {difficulties.map((d) => (
+                  {AI_DIFFICULTIES.map((d) => (
                     <button
                       key={d.level}
                       onClick={() => setSelectedDifficulty(d.level)}

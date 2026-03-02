@@ -11,6 +11,13 @@ import Chip from "@/components/ui/Chip";
 import Divider from "@/components/ui/Divider";
 import Tooltip from "@/components/ui/Tooltip";
 import Button from "@/components/ui/Button";
+import {
+  sourceAccents,
+  challengeSources,
+  homeFeatures,
+  howItWorksSteps,
+  footerPartners,
+} from "@/lib/home-content";
 
 /* ─── fade-up helper ─── */
 const fadeUp = (delay = 0) => ({
@@ -40,13 +47,6 @@ function SectionHeading({ title, subtitle }: { title: React.ReactNode; subtitle:
   );
 }
 
-/* ─── accent palettes ─── */
-const sourceAccents = {
-  green: { border: "border-green-500/15 hover:border-green-500/40", icon: "bg-green-500/10 text-green-400", chipColor: "green" as const, glow: "hover:shadow-green-500/10" },
-  blue: { border: "border-blue-500/15 hover:border-blue-500/40", icon: "bg-blue-500/10 text-blue-400", chipColor: "blue" as const, glow: "hover:shadow-blue-500/10" },
-  purple: { border: "border-purple-500/15 hover:border-purple-500/40", icon: "bg-purple-500/10 text-purple-400", chipColor: "purple" as const, glow: "hover:shadow-purple-500/10" },
-};
-
 export default function Home() {
   const router = useRouter();
 
@@ -72,11 +72,7 @@ export default function Home() {
           subtitle="Three unique puzzle sources to sharpen every aspect of your game"
         />
         <div className="grid gap-6 md:grid-cols-3">
-          {([
-            { icon: "♞", title: "Lichess Puzzles", description: "Real puzzles from Lichess rated games. Difficulty-filtered with unique deduplication.", accent: "green" as const, tag: "Popular", href: "/puzzles/lichess" },
-            { icon: "♜", title: "Dataset Puzzles", description: "From the Lichess puzzle database on HuggingFace. Millions of rated puzzles.", accent: "blue" as const, tag: "4M+ Puzzles", href: "/puzzles/dataset" },
-            { icon: "♛", title: "AI Generated", description: "Custom puzzles created by AI. Describe the theme and difficulty you want.", accent: "purple" as const, tag: "Pro", href: "/puzzles/ai" },
-          ]).map((src, i) => {
+          {challengeSources.map((src, i) => {
             const a = sourceAccents[src.accent];
             return (
               <motion.div key={src.title} {...fadeUp(i * 0.08)}>
@@ -136,12 +132,7 @@ export default function Home() {
 
           {/* Feature grid */}
           <div className="grid grid-cols-2 gap-4">
-            {([
-              { icon: "♟", title: "Drag & Click", description: "Intuitive piece movement — drag or click to move", href: "" },
-              { icon: "🎤", title: "Voice Control", description: 'Say "e2 to e4" — try the Voice Lab!', href: "/voice-test" },
-              { icon: "✦", title: "Smart Hints", description: "Visual hints that highlight the source square", href: "" },
-              { icon: "♔", title: "Daily Challenge", description: "New Lichess puzzle every day with calendar view", href: "/daily" },
-            ]).map((f, i) => (
+            {homeFeatures.map((f, i) => (
               <motion.div key={f.title} {...fadeUp(i * 0.06)}>
                 <Tooltip content={f.href ? "Try it" : f.title} side="top">
                   <div>
@@ -174,11 +165,7 @@ export default function Home() {
             subtitle="Three simple steps to sharper tactics"
           />
           <div className="grid gap-8 md:grid-cols-3">
-            {([
-              { step: "01", title: "Pick a Source", desc: "Choose Lichess, Dataset, or AI-generated puzzles. Filter by difficulty or theme.", icon: "🎯" },
-              { step: "02", title: "Solve & Learn", desc: "Drag, click, or speak your moves. Get instant feedback with hints when stuck.", icon: "🧩" },
-              { step: "03", title: "Track Progress", desc: "Review your solving history, improve your rating, and tackle daily challenges.", icon: "📈" },
-            ]).map((item, i) => (
+            {howItWorksSteps.map((item, i) => (
               <motion.div key={item.step} {...fadeUp(i * 0.1)}>
                 <Card className="group relative h-full text-center transition-all duration-300 hover:border-white/[0.1] hover:bg-white/[0.04]">
                   {/* Step badge */}
@@ -237,9 +224,16 @@ export default function Home() {
             <span>Built with passion</span>
           </div>
           <div className="flex items-center gap-3 text-[11px] text-[var(--text-muted)]">
-            <Chip size="sm" variant="flat" className="bg-white/[0.03] text-[var(--text-muted)]">Lichess</Chip>
-            <Chip size="sm" variant="flat" className="bg-white/[0.03] text-[var(--text-muted)]">HuggingFace</Chip>
-            <Chip size="sm" variant="flat" className="bg-white/[0.03] text-[var(--text-muted)]">AI</Chip>
+            {footerPartners.map((partner) => (
+              <Chip
+                key={partner}
+                size="sm"
+                variant="flat"
+                className="bg-white/[0.03] text-[var(--text-muted)]"
+              >
+                {partner}
+              </Chip>
+            ))}
           </div>
         </div>
       </footer>

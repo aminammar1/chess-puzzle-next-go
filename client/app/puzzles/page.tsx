@@ -4,50 +4,12 @@ import { useRouter } from "next/navigation";
 import Navbar from "@/components/layout/Navbar";
 import { useSubscription } from "@/lib/subscription";
 import { cn } from "@/lib/utils";
-
-const modes = [
-  {
-    href: "/puzzles/lichess",
-    icon: "♞",
-    title: "Lichess Puzzles",
-    description:
-      "Real puzzles from Lichess rated games. Difficulty-filtered with unique deduplication.",
-    color: "green",
-    border: "border-green-800/30 hover:border-green-600/50",
-    iconBg: "bg-green-900/30 text-green-400",
-    tag: "Popular",
-    tagColor: "bg-green-900/30 text-green-400 border-green-700/30",
-  },
-  {
-    href: "/puzzles/dataset",
-    icon: "♜",
-    title: "Dataset Puzzles",
-    description:
-      "Millions of rated puzzles from the Lichess puzzle database on HuggingFace.",
-    color: "blue",
-    border: "border-blue-800/30 hover:border-blue-600/50",
-    iconBg: "bg-blue-900/30 text-blue-400",
-    tag: "Huge Collection",
-    tagColor: "bg-blue-900/30 text-blue-400 border-blue-700/30",
-  },
-  {
-    href: "/puzzles/ai",
-    icon: "♛",
-    title: "AI Generated",
-    description:
-      "Custom puzzles created by AI. Describe the theme and difficulty you want.",
-    color: "purple",
-    border: "border-purple-800/30 hover:border-purple-600/50",
-    iconBg: "bg-purple-900/30 text-purple-400",
-    tag: "Pro",
-    tagColor: "bg-purple-900/30 text-purple-400 border-purple-700/30",
-    premium: true,
-  },
-];
+import { getPuzzleModes } from "@/lib/puzzle-modes";
 
 export default function PuzzlesPage() {
   const router = useRouter();
   const { hasAIAccess } = useSubscription();
+  const modes = getPuzzleModes();
 
   return (
     <div className="min-h-screen bg-[var(--bg-deep)]">

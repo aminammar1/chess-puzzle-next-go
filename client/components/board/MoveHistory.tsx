@@ -1,35 +1,13 @@
 "use client";
 
 import { usePuzzleStore } from "@/lib/store";
-import { useRef, useEffect } from "react";
+import { useMoveHistoryController } from "@/hooks/useMoveHistoryController";
 
 export default function MoveHistory() {
   const { puzzle, sanMoves, moveIndex, solved } = usePuzzleStore();
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  // Auto-scroll to the current move
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [moveIndex]);
+  const { scrollRef, pairs } = useMoveHistoryController(sanMoves, moveIndex);
 
   if (!puzzle || sanMoves.length === 0) return null;
-
-  // Group moves into pairs (White move, Black move)
-  const pairs: {
-    num: number;
-    white: { san: string; idx: number };
-    black: { san: string; idx: number } | null;
-  }[] = [];
-
-  for (let i = 0; i < sanMoves.length; i += 2) {
-    pairs.push({
-      num: Math.floor(i / 2) + 1,
-      white: { san: sanMoves[i], idx: i },
-      black: i + 1 < sanMoves.length ? { san: sanMoves[i + 1], idx: i + 1 } : null,
-    });
-  }
 
   return (
     <div className="w-full rounded-xl border border-white/[0.08] bg-black/40 backdrop-blur-md shadow-inner overflow-hidden">
@@ -64,10 +42,10 @@ export default function MoveHistory() {
                 {/* White move */}
                 <span
                   className={`flex-1 text-center rounded px-2 py-1 transition-all duration-200 ${wCurrent
-                      ? "bg-[var(--accent-gold)]/20 text-[var(--accent-gold)] font-bold ring-1 ring-[var(--accent-gold)]/40"
-                      : wPlayed || solved
-                        ? "text-[var(--text-primary)]"
-                        : "text-white/15"
+                    ? "bg-[var(--accent-gold)]/20 text-[var(--accent-gold)] font-bold ring-1 ring-[var(--accent-gold)]/40"
+                    : wPlayed || solved
+                      ? "text-[var(--text-primary)]"
+                      : "text-white/15"
                     }`}
                 >
                   {wPlayed || solved ? pair.white.san : "···"}
@@ -77,10 +55,10 @@ export default function MoveHistory() {
                 {pair.black ? (
                   <span
                     className={`flex-1 text-center rounded px-2 py-1 transition-all duration-200 ${bCurrent
-                        ? "bg-[var(--accent-gold)]/20 text-[var(--accent-gold)] font-bold ring-1 ring-[var(--accent-gold)]/40"
-                        : bPlayed || solved
-                          ? "text-[var(--text-primary)]"
-                          : "text-white/15"
+                      ? "bg-[var(--accent-gold)]/20 text-[var(--accent-gold)] font-bold ring-1 ring-[var(--accent-gold)]/40"
+                      : bPlayed || solved
+                        ? "text-[var(--text-primary)]"
+                        : "text-white/15"
                       }`}
                   >
                     {bPlayed || solved ? pair.black.san : "···"}

@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useCallback } from "react";
 import { usePuzzleStore } from "@/lib/store";
 import ChessBoard from "@/components/board/ChessBoard";
 import MoveHistory from "@/components/board/MoveHistory";
@@ -9,6 +8,7 @@ import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import { formatRating, getSourceLabel } from "@/lib/utils";
 import type { DifficultyLevel, PuzzleSource } from "@/lib/types";
+import { usePuzzleHistoryKeyboardNavigation } from "@/hooks/usePuzzleHistoryKeyboardNavigation";
 
 interface PuzzleSolverProps {
   source: PuzzleSource;
@@ -37,23 +37,7 @@ export default function PuzzleSolver({ source, onNextPuzzle, onBack, isDaily, on
     sessionId,
   } = usePuzzleStore();
 
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        navigateHistory("back");
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        navigateHistory("forward");
-      }
-    },
-    [navigateHistory]
-  );
-
-  useEffect(() => {
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleKeyDown]);
+  usePuzzleHistoryKeyboardNavigation(navigateHistory);
 
   if (!puzzle) return null;
 

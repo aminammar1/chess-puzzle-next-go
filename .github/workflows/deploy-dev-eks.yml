@@ -80,8 +80,6 @@ jobs:
                   - get-token
                   - --cluster-name
                   - ${{ github.event.inputs.cluster_name }}
-                  - --role-arn
-                  - ${EKS_CLUSTER_IAM_ROLE_ARN}
                   - --region
                   - ${AWS_REGION}
           EOF

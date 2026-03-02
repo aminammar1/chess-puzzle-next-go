@@ -86,7 +86,13 @@ jobs:
 
       - name: Deploy manifests with image tag
         run: |
-          kubectl delete svc api-gateway -n dev --ignore-not-found=true
+          if kubectl get svc client -n dev >/dev/null 2>&1; then
+            CURRENT_TYPE=$(kubectl get svc client -n dev -o jsonpath='{.spec.type}')
+            CURRENT_LB_CLASS=$(kubectl get svc client -n dev -o jsonpath='{.spec.loadBalancerClass}')
+            if [ "$CURRENT_TYPE" != "LoadBalancer" ] || [ "$CURRENT_LB_CLASS" != "eks.amazonaws.com/nlb" ]; then
+              kubectl delete svc client -n dev
+            fi
+          fi
           cd infra/k8s/overlays/dev
           kustomize edit set image ghcr.io/aminammar1/chess-puzzle-next-go/client=ghcr.io/aminammar1/chess-puzzle-next-go/client:${{ github.event.inputs.image_tag }}
           kustomize edit set image ghcr.io/aminammar1/chess-puzzle-next-go/api-gateway=ghcr.io/aminammar1/chess-puzzle-next-go/api-gateway:${{ github.event.inputs.image_tag }}
@@ -104,6 +110,10 @@ jobs:
       - name: Print public gateway service details
         run: |
           kubectl get svc api-gateway -n dev
+          kubectl get svc client -n dev
           kubectl describe svc api-gateway -n dev
+          kubectl describe svc client -n dev
           echo "DEV_API_BACKEND_URL should be:"
           echo "http://$(kubectl get svc api-gateway -n dev -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"
+          echo "Client public URL should be:"
+          echo "http://$(kubectl get svc client -n dev -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"

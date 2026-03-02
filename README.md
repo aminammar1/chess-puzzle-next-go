@@ -1,6 +1,6 @@
 # ♔ Chess Puzzle Next
 
-> Next-level chess puzzle trainer powered by microservices, AI, voice control, and real-time session tracking.
+> ♞ Next.js · 🐹 Go (Echo) · 🐍 FastAPI · ☁️ AWS EKS Auto Mode · 🐳 Docker · ⚡ GH Actions
 
 Fresh puzzles from **multiple sources** — Lichess API, a 4M+ puzzle dataset, and an **AI-powered RAG pipeline** that picks the perfect puzzle for your request. Solve by clicking pieces, or just **speak your move** — your voice is transcribed and converted into accurate chess notation automatically.
 
@@ -9,6 +9,7 @@ Fresh puzzles from **multiple sources** — Lichess API, a 4M+ puzzle dataset, a
 ## Table of Contents
 
 - [Architecture](#architecture)
+- [AWS Deploy](#aws-deploy--eks-auto-mode-quick-run)
 - [Puzzle Generator Diagram](#puzzle-generator-diagram)
 - [Puzzle Sources](#puzzle-sources)
 - [AI Feature — RAG Pipeline](#ai-feature--rag-pipeline)
@@ -64,6 +65,17 @@ Fresh puzzles from **multiple sources** — Lichess API, a 4M+ puzzle dataset, a
         │ ~4M puzzles   │   │ Llama 3.3 70B   │   │ Games / Data   │
         └───────────────┘   └────────────────┘   └────────────────┘
 ```
+
+## AWS Deploy — EKS Auto Mode (Quick Run)
+
+1. Run `.github/workflows/build-push-ghcr.yml` to push images to GHCR.
+2. Run `.github/workflows/deploy-dev-eks.yml` to deploy workloads to `eks-chess-app`.
+3. Check public backend URL:
+        - `kubectl get svc api-gateway -n dev -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'`
+4. Check public client URL:
+        - `kubectl get svc client -n dev -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'`
+
+Terraform is optional and used only if you want AWS API Gateway managed as code.
 
 ## Puzzle Generator Diagram
 

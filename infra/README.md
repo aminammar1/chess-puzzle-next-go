@@ -27,7 +27,9 @@ Recommended environment variable:
 
 - `DEV_API_BACKEND_URL`: public `api-gateway` LoadBalancer DNS URL used by Terraform for API Gateway integration.
 
-If you already have an EKS cluster (for example `eks-chess-app`), you can deploy workloads first with `.github/workflows/deploy-dev-eks.yml`, then read the ingress hostname and set `DEV_API_BACKEND_URL`.
+If you already have an EKS cluster (for example `eks-chess-app`), you can deploy workloads first with `.github/workflows/deploy-dev-eks.yml`, then read the `api-gateway` service hostname and set `DEV_API_BACKEND_URL`.
+
+If you do not need AWS API Gateway, Terraform is optional. You can use the `api-gateway` EKS LoadBalancer URL directly.
 
 ## Container Images (GHCR)
 
@@ -60,6 +62,7 @@ Deployed in namespace `dev`:
 - `redis`
 
 EKS Auto Mode exposes `api-gateway` via a `LoadBalancer` service.
+EKS Auto Mode also exposes `client` via a public `LoadBalancer` service.
 
 ## Optional Runtime Secrets for Services
 

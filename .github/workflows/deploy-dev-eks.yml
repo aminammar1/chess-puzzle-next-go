@@ -1,0 +1,106 @@
+name: Deploy to Dev EKS
+
+on:
+  workflow_dispatch:
+    inputs:
+      aws_region:
+        description: AWS region for EKS cluster
+        required: true
+        default: eu-west-3
+      cluster_name:
+        description: EKS cluster name
+        required: true
+        default: eks-chess-app
+      image_tag:
+        description: GHCR image tag to deploy
+        required: false
+        default: dev-latest
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      AWS_REGION: ${{ github.event.inputs.aws_region }}
+      EKS_CERTIFICATE_AUTHORITY: ${{ secrets.EKS_CERTIFICATE_AUTHORITY }}
+      EKS_CLUSTER_IAM_ROLE_ARN: ${{ secrets.EKS_CLUSTER_IAM_ROLE_ARN }}
+      EKS_OIDC_PROVIDER_URL: ${{ secrets.EKS_OIDC_PROVIDER_URL }}
+      EKS_SERVER_ENDPOINT: ${{ secrets.EKS_SERVER_ENDPOINT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.EKS_CLUSTER_IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Setup kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Validate required EKS environment secrets
+        run: |
+          test -n "${EKS_SERVER_ENDPOINT}"
+          test -n "${EKS_CERTIFICATE_AUTHORITY}"
+          test -n "${EKS_CLUSTER_IAM_ROLE_ARN}"
+          test -n "${EKS_OIDC_PROVIDER_URL}"
+
+      - name: Build kubeconfig from environment secrets
+        run: |
+          mkdir -p "$HOME/.kube"
+          cat > "$HOME/.kube/config" <<EOF
+          apiVersion: v1
+          clusters:
+          - cluster:
+              server: ${EKS_SERVER_ENDPOINT}
+              certificate-authority-data: ${EKS_CERTIFICATE_AUTHORITY}
+            name: dev-eks
+          contexts:
+          - context:
+              cluster: dev-eks
+              user: deployer
+            name: dev-eks
+          current-context: dev-eks
+          kind: Config
+          users:
+          - name: deployer
+            user:
+              exec:
+                apiVersion: client.authentication.k8s.io/v1beta1
+                command: aws
+                args:
+                  - eks
+                  - get-token
+                  - --cluster-name
+                  - ${{ github.event.inputs.cluster_name }}
+                  - --role-arn
+                  - ${EKS_CLUSTER_IAM_ROLE_ARN}
+                  - --region
+                  - ${AWS_REGION}
+          EOF
+
+      - name: Deploy manifests with image tag
+        run: |
+          cd infra/k8s/overlays/dev
+          kustomize edit set image ghcr.io/aminammar1/chess-puzzle-next-go/client=ghcr.io/aminammar1/chess-puzzle-next-go/client:${{ github.event.inputs.image_tag }}
+          kustomize edit set image ghcr.io/aminammar1/chess-puzzle-next-go/api-gateway=ghcr.io/aminammar1/chess-puzzle-next-go/api-gateway:${{ github.event.inputs.image_tag }}
+          kustomize edit set image ghcr.io/aminammar1/chess-puzzle-next-go/puzzle-generator=ghcr.io/aminammar1/chess-puzzle-next-go/puzzle-generator:${{ github.event.inputs.image_tag }}
+          kustomize edit set image ghcr.io/aminammar1/chess-puzzle-next-go/voice-to-move=ghcr.io/aminammar1/chess-puzzle-next-go/voice-to-move:${{ github.event.inputs.image_tag }}
+          kubectl apply -k .
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/client -n dev --timeout=300s
+          kubectl rollout status deployment/api-gateway -n dev --timeout=300s
+          kubectl rollout status deployment/puzzle-generator -n dev --timeout=300s
+          kubectl rollout status deployment/voice-to-move -n dev --timeout=300s
+
+      - name: Print ingress details
+        run: kubectl get ingress -n dev

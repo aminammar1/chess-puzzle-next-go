@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: voice-to-move
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: voice-to-move
+  template:
+    metadata:
+      labels:
+        app: voice-to-move
+    spec:
+      containers:
+        - name: voice-to-move
+          image: ghcr.io/aminammar1/chess-puzzle-next-go/voice-to-move:dev-latest
+          ports:
+            - containerPort: 8001
+          env:
+            - name: PORT
+              value: "8001"
+          envFrom:
+            - secretRef:
+                name: voice-to-move-secrets
+                optional: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: voice-to-move
+spec:
+  selector:
+    app: voice-to-move
+  ports:
+    - name: http
+      port: 8001
+      targetPort: 8001

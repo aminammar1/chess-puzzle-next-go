@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: puzzle-generator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: puzzle-generator
+  template:
+    metadata:
+      labels:
+        app: puzzle-generator
+    spec:
+      containers:
+        - name: puzzle-generator
+          image: ghcr.io/aminammar1/chess-puzzle-next-go/puzzle-generator:dev-latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: REDIS_URL
+              value: redis://redis:6379
+          envFrom:
+            - secretRef:
+                name: puzzle-generator-secrets
+                optional: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: puzzle-generator
+spec:
+  selector:
+    app: puzzle-generator
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

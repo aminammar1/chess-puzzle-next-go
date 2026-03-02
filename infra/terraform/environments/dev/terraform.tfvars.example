@@ -1,0 +1,7 @@
+aws_region          = "eu-west-3"
+project_name        = "chess-puzzle"
+environment         = "dev"
+
+# Set this to the public ingress URL (ALB/NLB DNS) after first ingress deployment.
+# Example: "http://k8s-dev-ingress-123456.eu-west-3.elb.amazonaws.com"
+api_backend_url = "http://replace-with-ingress-dns"

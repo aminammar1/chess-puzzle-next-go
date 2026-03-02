@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: dev
+
+resources:
+  - ../../base
+  - ingress.yaml
+
+images:
+  - name: ghcr.io/aminammar1/chess-puzzle-next-go/client
+    newTag: dev-latest
+  - name: ghcr.io/aminammar1/chess-puzzle-next-go/api-gateway
+    newTag: dev-latest
+  - name: ghcr.io/aminammar1/chess-puzzle-next-go/puzzle-generator
+    newTag: dev-latest
+  - name: ghcr.io/aminammar1/chess-puzzle-next-go/voice-to-move
+    newTag: dev-latest

@@ -1,21 +1,26 @@
-# ♔ Chess Puzzle Next
+# ♔ Chess Puzzle Next — AI-Powered Chess Training Platform
 
-> ♞ Next.js · 🐹 Go (Echo) · 🐍 FastAPI · ☁️ AWS EKS Auto Mode · 🐳 Docker · ⚡ GH Actions
+![Next.js](https://img.shields.io/badge/Next.js-000?logo=nextdotjs&logoColor=white)
+![Go](https://img.shields.io/badge/Go-00ADD8?logo=go&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![AWS](https://img.shields.io/badge/AWS-232F3E?logo=amazonwebservices&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
+![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?logo=githubactions&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-DC382D?logo=redis&logoColor=white)
+![Nginx](https://img.shields.io/badge/Nginx-009639?logo=nginx&logoColor=white)
+![Terraform](https://img.shields.io/badge/Terraform-844FBA?logo=terraform&logoColor=white)
 
-Fresh puzzles from **multiple sources** — Lichess API, a 4M+ puzzle dataset, and an **AI-powered RAG pipeline** that picks the perfect puzzle for your request. Solve by clicking pieces, or just **speak your move** — your voice is transcribed and converted into accurate chess notation automatically.
+Solve chess puzzles from Lichess, a 4M+ dataset, or let an **AI RAG pipeline** pick the perfect one. Play by clicking — or just **speak your move**.
 
 ---
 
 ## Table of Contents
 
 - [Architecture](#architecture)
-- [AWS Deploy](#aws-deploy--eks-auto-mode-quick-run)
-- [Puzzle Generator Diagram](#puzzle-generator-diagram)
+- [AWS Infrastructure](#aws-infrastructure)
 - [Puzzle Sources](#puzzle-sources)
 - [AI Feature — RAG Pipeline](#ai-feature--rag-pipeline)
 - [Voice-to-Move](#voice-to-move--how-it-works)
-- [API Gateway](#api-gateway)
-- [Redis — Session & Cache](#redis--session--cache-layer)
 - [Services](#services)
 - [Getting Started](#getting-started)
 - [Environment Variables](#environment-variables)
@@ -66,16 +71,18 @@ Fresh puzzles from **multiple sources** — Lichess API, a 4M+ puzzle dataset, a
         └───────────────┘   └────────────────┘   └────────────────┘
 ```
 
-## AWS Deploy — EKS Auto Mode (Quick Run)
+## AWS Infrastructure
 
-1. Run `.github/workflows/build-push-ghcr.yml` to push images to GHCR.
-2. Run `.github/workflows/deploy-dev-eks.yml` to deploy workloads to `eks-chess-app`.
-3. Check public backend URL:
-        - `kubectl get svc api-gateway -n dev -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'`
-4. Check public client URL:
-        - `kubectl get svc client -n dev -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'`
+The app runs on AWS using the following services:
 
-Terraform is optional and used only if you want AWS API Gateway managed as code.
+| Service | Role |
+|---------|------|
+| **EKS** (Auto Mode) | Kubernetes cluster hosting all workloads |
+| **ALB** | Application Load Balancer via ALB Ingress Controller |
+| **API Gateway** (HTTP API) | Optional Terraform-managed HTTP proxy |
+| **IAM** (OIDC) | Federated identity for GitHub Actions → EKS deploys |
+
+CI/CD is handled by two GitHub Actions workflows: one builds & pushes images to GHCR, the other deploys to EKS via Kustomize.
 
 ## Puzzle Generator Diagram
 
@@ -128,20 +135,11 @@ User prompt: "a nice fork puzzle"
 
 ### Why RAG?
 
-- **100% valid puzzles** — every puzzle comes from the Lichess database
-- **Fast** — ~3s total (1.5s retrieval + 1.5s inference)
-- **Accurate** — the LLM selects from pre-validated candidates
-- **Lightweight** — only rating + themes are sent, minimal token usage
+- **100% valid puzzles** — sourced from Lichess database
+- **Fast** — ~3s total
+- **Lightweight** — only rating + themes sent to the LLM
 
-### Model
-
-| Property | Value |
-|----------|-------|
-| Provider | NVIDIA Inference API |
-| Model | `meta/llama-3.3-70b-instruct` |
-| Parameters | 70B |
-| Temperature | 0.2 |
-| Max tokens | 128 |
+> **Model:** `meta/llama-3.3-70b-instruct` via NVIDIA Inference API (70B params, temp 0.2)
 
 ---
 
@@ -485,13 +483,13 @@ Swagger UI is available at `http://localhost:8080/swagger/index.html` when the s
 | Layer | Technology |
 |-------|-----------|
 | Frontend | Next.js 16, React 19, Tailwind CSS 4, Zustand, Framer Motion |
-| Backend | Go 1.25, Echo framework, Swagger |
+| Backend | Go 1.25, Echo, Swagger |
 | AI | NVIDIA Inference API, Llama 3.3 70B Instruct |
 | Data | HuggingFace Datasets Server, Lichess API |
-| Cache | Redis 8 (Alpine) with AOF persistence |
-| Voice | Python 3.14, FastAPI, OpenAI/AssemblyAI/Deepgram STT, Custom NLP |
-| Gateway | nginx 1.27 (reverse proxy, CORS, WebSocket) |
-| Infra | Docker Compose, multi-stage builds |
+| Cache | Redis 8 (Alpine), AOF persistence |
+| Voice | Python 3.14, FastAPI, OpenAI / AssemblyAI / Deepgram STT, Custom NLP |
+| Gateway | nginx 1.27, reverse proxy, CORS, WebSocket |
+| Infra | AWS EKS, Docker Compose, Terraform, GitHub Actions |
 
 ---
 
@@ -556,4 +554,4 @@ chess-puzzle-next/
 
 ---
 
-**Built with passion for chess and clean code.**
+**Built with passion for chess.**

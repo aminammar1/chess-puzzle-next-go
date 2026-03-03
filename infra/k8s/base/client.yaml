@@ -24,6 +24,8 @@ spec:
               value: "0.0.0.0"
             - name: PORT
               value: "3000"
+            - name: NEXT_PUBLIC_GATEWAY_URL
+              value: "http://api-gateway"
           livenessProbe:
             httpGet:
               path: /

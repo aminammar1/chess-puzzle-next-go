@@ -20,6 +20,10 @@ spec:
           env:
             - name: NODE_ENV
               value: production
+            - name: HOSTNAME
+              value: "0.0.0.0"
+            - name: PORT
+              value: "3000"
           livenessProbe:
             httpGet:
               path: /
@@ -47,5 +51,5 @@ spec:
     app: client
   ports:
     - name: http
-      port: 3000
+      port: 80
       targetPort: 3000

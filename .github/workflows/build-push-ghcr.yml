@@ -58,4 +58,3 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/chess-puzzle-next-go/${{ matrix.service.name }}:${{ steps.vars.outputs.tag }}
-            ghcr.io/${{ github.repository_owner }}/chess-puzzle-next-go/${{ matrix.service.name }}:dev-latest

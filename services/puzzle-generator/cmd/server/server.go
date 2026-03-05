@@ -49,9 +49,9 @@ func newServer(cfg *config.Config) *echo.Echo {
 	// Redis (optional — degrades gracefully)
 	redisClient := redispkg.NewOptional(cfg.Redis.URL)
 	if redisClient != nil {
-		fmt.Println("✓ Redis connected")
+		fmt.Println(" Redis connected")
 	} else {
-		fmt.Println("⚠ Redis unavailable — sessions disabled")
+		fmt.Println(" Redis unavailable — sessions disabled")
 	}
 	sessionHandler := handlers.NewSessionHandler(redisClient, cfg.Redis.SessionTTL)
 

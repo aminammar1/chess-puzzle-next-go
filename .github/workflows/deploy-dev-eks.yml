@@ -13,8 +13,7 @@ on:
         default: eks-chess-app
       image_tag:
         description: GHCR image tag to deploy
-        required: false
-        default: dev-latest
+        required: true
 
 permissions:
   id-token: write
@@ -51,6 +50,14 @@ jobs:
           test -n "${EKS_CERTIFICATE_AUTHORITY}"
           test -n "${EKS_CLUSTER_IAM_ROLE_ARN}"
           test -n "${EKS_OIDC_PROVIDER_URL}"
+
+      - name: Validate image tag input
+        run: |
+          test -n "${{ github.event.inputs.image_tag }}"
+          if [ "${{ github.event.inputs.image_tag }}" = "dev-latest" ]; then
+            echo "Refusing mutable tag 'dev-latest'. Provide an immutable tag (e.g. commit SHA or release tag)."
+            exit 1
+          fi
 
       - name: Build kubeconfig from environment secrets
         run: |

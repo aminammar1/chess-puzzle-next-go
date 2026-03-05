@@ -9,10 +9,10 @@ resources:
 
 images:
   - name: ghcr.io/aminammar1/chess-puzzle-next-go/client
-    newTag: dev-latest
+    newTag: v1.0.1
   - name: ghcr.io/aminammar1/chess-puzzle-next-go/api-gateway
-    newTag: dev-latest
+    newTag: v1.0.1
   - name: ghcr.io/aminammar1/chess-puzzle-next-go/puzzle-generator
-    newTag: dev-latest
+    newTag: v1.0.1
   - name: ghcr.io/aminammar1/chess-puzzle-next-go/voice-to-move
-    newTag: dev-latest
+    newTag: v1.0.1

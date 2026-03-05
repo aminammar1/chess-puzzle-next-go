@@ -17,7 +17,7 @@ import (
 // @version 1.0
 // @description Chess puzzle generator service (Lichess, AI via NVIDIA Inference, and Hugging Face dataset).
 // @BasePath /api/v1
-// @schemes http https
+// @schemes https
 
 func main() {
 	cfg, err := config.Load()

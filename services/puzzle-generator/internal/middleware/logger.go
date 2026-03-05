@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/gommon/log"
 )
 
 // RequestLogger returns an Echo middleware that logs each request with
@@ -15,6 +14,10 @@ func RequestLogger() echo.MiddlewareFunc {
 			start := time.Now()
 
 			err := next(c)
+			if err != nil {
+				// Let Echo central error handler set the proper status/body first.
+				c.Error(err)
+			}
 
 			req := c.Request()
 			res := c.Response()
@@ -29,11 +32,7 @@ func RequestLogger() echo.MiddlewareFunc {
 				c.RealIP(),
 			)
 
-			if err != nil {
-				c.Logger().Errorf("request error: %v (level=%d)", err, log.ERROR)
-			}
-
-			return err
+			return nil
 		}
 	}
 }

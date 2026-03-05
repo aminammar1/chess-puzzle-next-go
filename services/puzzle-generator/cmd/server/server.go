@@ -62,6 +62,7 @@ func newServer(cfg *config.Config) *echo.Echo {
 	e.Use(middleware.CORS())
 	e.Use(custmw.RequestLogger())
 
+	e.GET("/", handlers.Root)
 	e.GET("/health", handlers.Health)
 	e.GET("/api/v1/health", handlers.Health)
 	e.GET("/swagger/*", echo.WrapHandler(httpSwagger.WrapHandler))

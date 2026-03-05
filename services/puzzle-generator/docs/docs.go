@@ -344,7 +344,7 @@ var SwaggerInfo = &swag.Spec{
 	Version:          "1.0",
 	Host:             "",
 	BasePath:         "/api/v1",
-	Schemes:          []string{"http", "https"},
+	Schemes:          []string{"https"},
 	Title:            "Puzzle Generator API",
 	Description:      "Chess puzzle generator service (Lichess, AI via NVIDIA Inference, and Hugging Face dataset).",
 	InfoInstanceName: "swagger",

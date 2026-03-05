@@ -15,3 +15,13 @@ class HealthResponse(BaseModel):
 @router.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     return HealthResponse(status="ok", service="voice-to-move", version="0.2.0")
+
+
+@router.get("/")
+async def root() -> dict[str, str]:
+    return {
+        "status": "ok",
+        "service": "voice-to-move",
+        "version": "0.2.0",
+        "hint": "Use /api/v1/voice/* endpoints or /docs for API docs",
+    }

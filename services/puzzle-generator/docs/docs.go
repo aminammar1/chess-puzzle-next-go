@@ -82,7 +82,7 @@ const docTemplate = `{
         },
         "/puzzle/ai": {
             "post": {
-                "description": "Generates one custom puzzle from OpenRouter model",
+                "description": "Uses a RAG pipeline: fetches candidate puzzles from the Lichess dataset and asks the NVIDIA model to select the best match for the user's prompt",
                 "consumes": [
                     "application/json"
                 ],
@@ -92,7 +92,7 @@ const docTemplate = `{
                 "tags": [
                     "puzzle"
                 ],
-                "summary": "Generate puzzle from AI",
+                "summary": "Generate puzzle from AI (RAG)",
                 "parameters": [
                     {
                         "description": "AI puzzle request",
@@ -346,7 +346,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/api/v1",
 	Schemes:          []string{"http", "https"},
 	Title:            "Puzzle Generator API",
-	Description:      "Chess puzzle generator service (Lichess, AI via OpenRouter, and Hugging Face dataset).",
+	Description:      "Chess puzzle generator service (Lichess, AI via NVIDIA Inference, and Hugging Face dataset).",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

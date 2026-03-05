@@ -5,7 +5,7 @@
     ],
     "swagger": "2.0",
     "info": {
-        "description": "Chess puzzle generator service (Lichess, AI via OpenRouter, and Hugging Face dataset).",
+        "description": "Chess puzzle generator service (Lichess, AI via NVIDIA Inference, and Hugging Face dataset).",
         "title": "Puzzle Generator API",
         "contact": {},
         "version": "1.0"
@@ -79,7 +79,7 @@
         },
         "/puzzle/ai": {
             "post": {
-                "description": "Generates one custom puzzle from OpenRouter model",
+                "description": "Uses a RAG pipeline: fetches candidate puzzles from the Lichess dataset and asks the NVIDIA model to select the best match for the user's prompt",
                 "consumes": [
                     "application/json"
                 ],
@@ -89,7 +89,7 @@
                 "tags": [
                     "puzzle"
                 ],
-                "summary": "Generate puzzle from AI",
+                "summary": "Generate puzzle from AI (RAG)",
                 "parameters": [
                     {
                         "description": "AI puzzle request",

@@ -15,7 +15,7 @@ import (
 
 // @title Puzzle Generator API
 // @version 1.0
-// @description Chess puzzle generator service (Lichess, AI via OpenRouter, and Hugging Face dataset).
+// @description Chess puzzle generator service (Lichess, AI via NVIDIA Inference, and Hugging Face dataset).
 // @BasePath /api/v1
 // @schemes http https
 

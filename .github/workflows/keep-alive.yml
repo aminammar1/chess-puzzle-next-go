@@ -1,0 +1,24 @@
+name: Keep Render Services Alive
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Ping all services
+        run: |
+          CURL_OPTS="--retry 3 --retry-delay 5 --max-time 30 -sSf"
+          SERVICES=(
+            "https://puzzle-generator-service.onrender.com"
+            "https://voice-to-move-service.onrender.com"
+            "https://api-gateway-ij84.onrender.com"
+          )
+          for BASE_URL in "${SERVICES[@]}"; do
+            echo "Pinging $BASE_URL ..."
+            curl $CURL_OPTS "$BASE_URL/health" || curl $CURL_OPTS "$BASE_URL"
+          done

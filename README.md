@@ -1,4 +1,4 @@
-# ♔ Chess Puzzle Next — AI-Powered Chess Training Platform
+# ♔ Chess Puzzle Next AI-Powered Chess Training Platform
 
 ![Next.js](https://img.shields.io/badge/Next.js-000?logo=nextdotjs&logoColor=white)
 ![Go](https://img.shields.io/badge/Go-00ADD8?logo=go&logoColor=white)
